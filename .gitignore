@@ -1,0 +1,23 @@
+# Build artifacts
+.build/
+.swiftpm/
+dist/
+*.app
+DerivedData/
+
+# Models (large, downloaded by install script)
+models/
+*.bin
+*.gguf
+
+# macOS
+.DS_Store
+
+# User runtime data (recordings, clipboard db) created at runtime
+*.mov
+*.wav
+*.m4a
+
+# Local secrets
+.env
+Secrets.plist
