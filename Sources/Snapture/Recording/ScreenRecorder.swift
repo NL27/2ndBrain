@@ -18,8 +18,11 @@ final class ScreenRecorder: NSObject, SCStreamDelegate, SCStreamOutput {
     func start(display: SCDisplay, captureSystemAudio: Bool) async throws {
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let config = SCStreamConfiguration()
-        config.width = Int(CGFloat(display.width) * (NSScreen.main?.backingScaleFactor ?? 2))
-        config.height = Int(CGFloat(display.height) * (NSScreen.main?.backingScaleFactor ?? 2))
+        // Use the scale factor of the matching screen so each display records at
+        // its own native pixel resolution (important on mixed-DPI multi-monitor setups).
+        let scale = NSScreen.screens.first(where: { $0.displayID == display.displayID })?.backingScaleFactor ?? 2
+        config.width = Int(CGFloat(display.width) * scale)
+        config.height = Int(CGFloat(display.height) * scale)
         config.minimumFrameInterval = CMTime(value: 1, timescale: 60)
         config.queueDepth = 6
         config.showsCursor = true

@@ -59,8 +59,15 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         let recording = RecordingCoordinator.shared.isRecording
-        addItem(menu, recording ? "Stop Recording" : "Record Screen + Audio",
-                #selector(toggleScreenRecording), key: "6", mods: [.control, .option])
+        if recording {
+            addItem(menu, "Stop Recording", #selector(stopRecording), key: "6", mods: [.control, .option])
+        } else {
+            addItem(menu, "Record Screen Under Cursor + Audio",
+                    #selector(recordCursorScreen), key: "6", mods: [.control, .option])
+            let screensItem = NSMenuItem(title: "Record Specific Screen", action: nil, keyEquivalent: "")
+            screensItem.submenu = buildScreensMenu()
+            menu.addItem(screensItem)
+        }
         addItem(menu, recording && RecordingCoordinator.shared.mode == .audioOnly ? "Stop Audio" : "Record Audio Only",
                 #selector(toggleAudioRecording))
         menu.addItem(.separator())
@@ -112,6 +119,31 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         addItem(menu, "Set Base URL / Model…", #selector(setAIEndpoint))
         addItem(menu, "Set API Key…", #selector(setAPIKey))
+        return menu
+    }
+
+    private func buildScreensMenu() -> NSMenu {
+        let menu = NSMenu()
+        let displays = RecordingCoordinator.availableDisplays()
+
+        if displays.count > 1 {
+            let all = NSMenuItem(title: "All Displays (\(displays.count)) — separate files",
+                                 action: #selector(recordSelectedScreen(_:)), keyEquivalent: "")
+            all.target = self
+            all.representedObject = "all"
+            menu.addItem(all)
+            menu.addItem(.separator())
+        }
+
+        for (idx, display) in displays.enumerated() {
+            let pixels = "\(Int(display.frame.width * display.scale))×\(Int(display.frame.height * display.scale))"
+            let isMain = display.id == CGMainDisplayID()
+            let title = "Display \(idx + 1): \(display.name)\(isMain ? " (Main)" : "") — \(pixels)"
+            let item = NSMenuItem(title: title, action: #selector(recordSelectedScreen(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = NSNumber(value: display.id)
+            menu.addItem(item)
+        }
         return menu
     }
 
@@ -169,7 +201,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func captureArea() { ScreenshotManager.shared.captureRegionToClipboard() }
     @objc private func captureOCR() { OCRManager.shared.captureRegionAndCopyText() }
-    @objc private func toggleScreenRecording() { RecordingCoordinator.shared.toggleScreenRecording() }
+    @objc private func recordCursorScreen() {
+        RecordingCoordinator.shared.toggleScreenRecording(selection: .display(RecordingCoordinator.displayUnderCursor()))
+    }
+    @objc private func stopRecording() { RecordingCoordinator.shared.stopIfRecording() }
+    @objc private func recordSelectedScreen(_ sender: NSMenuItem) {
+        if let token = sender.representedObject as? String, token == "all" {
+            RecordingCoordinator.shared.toggleScreenRecording(selection: .all)
+        } else if let number = sender.representedObject as? NSNumber {
+            RecordingCoordinator.shared.toggleScreenRecording(selection: .display(CGDirectDisplayID(number.uint32Value)))
+        }
+    }
     @objc private func toggleAudioRecording() { RecordingCoordinator.shared.toggleAudioRecording() }
     @objc private func showClipboard() { ClipboardHistoryController.shared.toggle(relativeTo: statusItem.button) }
     @objc private func openSupportFolder() { NSWorkspace.shared.open(AppInfo.supportDirectory) }

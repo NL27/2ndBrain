@@ -65,9 +65,10 @@ final class HotKeyManager {
         register(KeyCombo(keyCode: UInt32(kVK_ANSI_V), modifiers: UInt32(controlKey | optionKey))) {
             ClipboardHistoryController.shared.toggle(relativeTo: nil)
         }
-        // ⌃⌥6 — toggle screen recording
+        // ⌃⌥6 — toggle recording of the display under the cursor
         register(KeyCombo(keyCode: UInt32(kVK_ANSI_6), modifiers: UInt32(controlKey | optionKey))) {
-            RecordingCoordinator.shared.toggleScreenRecording()
+            RecordingCoordinator.shared.toggleScreenRecording(
+                selection: .display(RecordingCoordinator.displayUnderCursor()))
         }
     }
 }

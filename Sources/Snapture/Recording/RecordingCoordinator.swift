@@ -2,14 +2,28 @@ import AppKit
 import ScreenCaptureKit
 
 /// Orchestrates screen + system audio + microphone recording and post-capture
-/// transcription.
+/// transcription. Supports recording a chosen display, the display under the
+/// cursor, or every connected display at once (one file per display).
 final class RecordingCoordinator {
     static let shared = RecordingCoordinator()
     private init() {}
 
     enum Mode { case screen, audioOnly }
 
-    private let screenRecorder = ScreenRecorder()
+    /// Which display(s) to record.
+    enum ScreenSelection {
+        case all
+        case display(CGDirectDisplayID)
+    }
+
+    struct DisplayInfo {
+        let id: CGDirectDisplayID
+        let name: String
+        let frame: CGRect
+        let scale: CGFloat
+    }
+
+    private var screenRecorders: [ScreenRecorder] = []
     private let audioRecorder = AudioRecorder()
     private(set) var isRecording = false
     private(set) var mode: Mode = .screen
@@ -17,15 +31,40 @@ final class RecordingCoordinator {
     /// Posted when recording state changes so the menu can update its title.
     static let stateChanged = Notification.Name("RecordingStateChanged")
 
-    func toggleScreenRecording() {
-        if isRecording { stop() } else { startScreen() }
+    // MARK: - Display discovery
+
+    /// All currently connected displays (synchronous, for menu building).
+    static func availableDisplays() -> [DisplayInfo] {
+        NSScreen.screens.map { screen in
+            DisplayInfo(id: screen.displayID,
+                        name: screen.localizedName,
+                        frame: screen.frame,
+                        scale: screen.backingScaleFactor)
+        }
+    }
+
+    /// The display the mouse pointer is currently on.
+    static func displayUnderCursor() -> CGDirectDisplayID {
+        let location = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(location, $0.frame, false) } ?? NSScreen.main
+        return screen?.displayID ?? CGMainDisplayID()
+    }
+
+    // MARK: - Public control
+
+    func toggleScreenRecording(selection: ScreenSelection) {
+        if isRecording { stop() } else { startScreen(selection: selection) }
     }
 
     func toggleAudioRecording() {
         if isRecording { stop() } else { startAudioOnly() }
     }
 
-    private func startScreen() {
+    func stopIfRecording() {
+        if isRecording { stop() }
+    }
+
+    private func startScreen(selection: ScreenSelection) {
         guard Permissions.hasScreenRecording() else {
             Permissions.requestScreenRecording()
             Permissions.openScreenRecordingSettings()
@@ -35,16 +74,38 @@ final class RecordingCoordinator {
         Task {
             do {
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-                guard let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
-                        ?? content.displays.first else {
+                let displays = resolveDisplays(selection, from: content.displays)
+                guard !displays.isEmpty else {
                     Log.error("No display available for recording"); return
                 }
-                try await screenRecorder.start(display: display, captureSystemAudio: Settings.shared.captureSystemAudio)
+
+                // Only the first stream captures system audio to avoid recording
+                // it multiple times when recording several displays at once.
+                var captureAudio = Settings.shared.captureSystemAudio
+                for display in displays {
+                    let recorder = ScreenRecorder()
+                    try await recorder.start(display: display, captureSystemAudio: captureAudio)
+                    screenRecorders.append(recorder)
+                    captureAudio = false
+                }
                 startMicIfEnabled()
                 await MainActor.run { self.setRecording(true) }
+                Log.info("Recording \(displays.count) display(s)")
             } catch {
                 Log.error("Failed to start screen recording: \(error)")
+                await self.stopAllScreenRecorders()
             }
+        }
+    }
+
+    private func resolveDisplays(_ selection: ScreenSelection, from available: [SCDisplay]) -> [SCDisplay] {
+        switch selection {
+        case .all:
+            return available
+        case .display(let id):
+            if let match = available.first(where: { $0.displayID == id }) { return [match] }
+            if let main = available.first(where: { $0.displayID == CGMainDisplayID() }) { return [main] }
+            return Array(available.prefix(1))
         }
     }
 
@@ -84,12 +145,12 @@ final class RecordingCoordinator {
             var audioForTranscription: URL?
             let micURL = audioRecorder.stop()
             if mode == .screen {
-                let movURL = await screenRecorder.stop()
-                audioForTranscription = micURL ?? movURL
-                if let movURL { revealInFinder(movURL) }
+                let movURLs = await stopAllScreenRecorders()
+                audioForTranscription = micURL ?? movURLs.first
+                if !movURLs.isEmpty { revealInFinder(movURLs) }
             } else {
                 audioForTranscription = micURL
-                if let micURL { revealInFinder(micURL) }
+                if let micURL { revealInFinder([micURL]) }
             }
             await MainActor.run { self.setRecording(false) }
 
@@ -99,14 +160,25 @@ final class RecordingCoordinator {
         }
     }
 
+    @discardableResult
+    private func stopAllScreenRecorders() async -> [URL] {
+        var urls: [URL] = []
+        for recorder in screenRecorders {
+            if let url = await recorder.stop() { urls.append(url) }
+        }
+        screenRecorders.removeAll()
+        return urls
+    }
+
     private func setRecording(_ value: Bool) {
         isRecording = value
         NotificationCenter.default.post(name: Self.stateChanged, object: nil)
     }
 
-    private func revealInFinder(_ url: URL) {
+    private func revealInFinder(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
         DispatchQueue.main.async {
-            NSWorkspace.shared.activateFileViewerSelecting([url])
+            NSWorkspace.shared.activateFileViewerSelecting(urls)
         }
     }
 }
