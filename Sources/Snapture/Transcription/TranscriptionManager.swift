@@ -68,7 +68,7 @@ final class TranscriptionManager {
         guard let exe = locate(["whisper-cli", "whisper-cpp", "main"]) else {
             throw err("whisper.cpp not found. Run scripts/install.sh to install it.")
         }
-        let modelPath = modelFile(for: model, ext: "bin")
+        let modelPath = try resolveWhisperModel(model)
         let out = wav.deletingPathExtension()
         let args = ["-m", modelPath, "-f", wav.path, "-otxt", "-of", out.path, "-np"]
         _ = try run(exe, args)
@@ -162,9 +162,19 @@ final class TranscriptionManager {
 
     // MARK: - Helpers
 
-    private func modelFile(for model: String, ext: String) -> String {
+    /// Returns the path to the requested ggml model, falling back to any model
+    /// that is actually installed so a profile/model mismatch doesn't fail hard.
+    private func resolveWhisperModel(_ model: String) throws -> String {
         let dir = AppInfo.supportDirectory.appendingPathComponent("models", isDirectory: true)
-        return dir.appendingPathComponent("ggml-\(model).\(ext)").path
+        let preferred = dir.appendingPathComponent("ggml-\(model).bin")
+        if FileManager.default.fileExists(atPath: preferred.path) { return preferred.path }
+
+        if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil),
+           let fallback = files.first(where: { $0.lastPathComponent.hasPrefix("ggml-") && $0.pathExtension == "bin" }) {
+            Log.info("Whisper model '\(model)' not installed; using \(fallback.lastPathComponent)")
+            return fallback.path
+        }
+        throw err("Whisper model 'ggml-\(model).bin' not found. Run: scripts/install.sh --with-whisper --model \(model)")
     }
 
     /// Searches common locations + PATH for an executable.

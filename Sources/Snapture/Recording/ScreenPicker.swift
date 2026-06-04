@@ -65,11 +65,14 @@ final class ScreenPicker {
         panel.title = "Choose a Screen to Record"
         panel.titlebarAppearsTransparent = true
         panel.isFloatingPanel = true
-        panel.level = .modalPanel
+        // Must sit ABOVE the full-screen identify overlays (which are at
+        // .screenSaver), otherwise the panel is hidden behind them.
+        panel.level = NSWindow.Level(rawValue: NSWindow.Level.screenSaver.rawValue + 1)
         panel.contentView = hosting
         panel.isReleasedWhenClosed = false
         panel.center()
         panel.makeKeyAndOrderFront(nil)
+        panel.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
         self.panel = panel
 
@@ -143,9 +146,11 @@ final class ScreenPicker {
 
             NSLayoutConstraint.activate([
                 badge.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-                badge.centerYAnchor.constraint(equalTo: container.centerYAnchor),
-                badge.widthAnchor.constraint(equalToConstant: 260),
-                badge.heightAnchor.constraint(equalToConstant: 260),
+                // Near the top of each screen so the numbers don't sit underneath
+                // the centered picker panel.
+                badge.topAnchor.constraint(equalTo: container.topAnchor, constant: 120),
+                badge.widthAnchor.constraint(equalToConstant: 220),
+                badge.heightAnchor.constraint(equalToConstant: 220),
                 label.centerXAnchor.constraint(equalTo: badge.centerXAnchor),
                 label.centerYAnchor.constraint(equalTo: badge.centerYAnchor)
             ])
