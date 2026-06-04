@@ -31,9 +31,11 @@ if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
 fi
 
 # Prefer a stable self-signed identity so macOS Privacy (TCC) remembers granted
-# permissions across rebuilds. Falls back to ad-hoc if none is installed.
+# permissions across rebuilds. A self-signed cert is fine here — TCC keys on the
+# stable certificate, not on trust — so we match the identity by name whether or
+# not it's marked "trusted". Falls back to ad-hoc if it isn't installed.
 IDENTITY_NAME="${SNAPTURE_SIGN_IDENTITY:-Snapture Self-Signed}"
-if security find-identity -v 2>/dev/null | grep -q "$IDENTITY_NAME"; then
+if security find-identity 2>/dev/null | grep -q "$IDENTITY_NAME"; then
   SIGN_ID="$IDENTITY_NAME"
   echo "==> Code signing with stable identity '$IDENTITY_NAME'…"
 else
