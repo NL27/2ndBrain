@@ -59,15 +59,7 @@ final class ScreenshotManager {
 
     private func ensurePermission() -> Bool {
         if Permissions.hasScreenRecording() { return true }
-        Permissions.requestScreenRecording()
-        let alert = NSAlert()
-        alert.messageText = "Screen Recording permission needed"
-        alert.informativeText = "Grant Snapture access in System Settings → Privacy & Security → Screen Recording, then try again."
-        alert.addButton(withTitle: "Open Settings")
-        alert.addButton(withTitle: "Cancel")
-        if alert.runModal() == .alertFirstButtonReturn {
-            Permissions.openScreenRecordingSettings()
-        }
+        Permissions.guideScreenRecording()
         return false
     }
 }

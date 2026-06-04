@@ -66,8 +66,7 @@ final class RecordingCoordinator {
 
     private func startScreen(selection: ScreenSelection) {
         guard Permissions.hasScreenRecording() else {
-            Permissions.requestScreenRecording()
-            Permissions.openScreenRecordingSettings()
+            DispatchQueue.main.async { Permissions.guideScreenRecording() }
             return
         }
         mode = .screen

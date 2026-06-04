@@ -52,9 +52,8 @@ final class ScreenPicker {
                                         RecordingCoordinator.shared.toggleScreenRecording(selection: .all)
                                     },
                                     onGrantPermission: { [weak self] in
-                                        Permissions.requestScreenRecording()
-                                        Permissions.openScreenRecordingSettings()
                                         self?.dismiss()
+                                        Permissions.guideScreenRecording()
                                     },
                                     onCancel: { [weak self] in self?.dismiss() })
 

@@ -59,4 +59,36 @@ enum Permissions {
             NSWorkspace.shared.open(url)
         }
     }
+
+    /// Relaunches the app. Screen Recording permission only takes effect after a
+    /// restart, so we offer this once the user has granted it in System Settings.
+    static func relaunchApp() {
+        let url = Bundle.main.bundleURL
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: url, configuration: config) { _, _ in
+            DispatchQueue.main.async { NSApp.terminate(nil) }
+        }
+    }
+
+    /// Standardised "needs Screen Recording" flow: request access (shows the
+    /// system dialog the first time), open Settings, and offer to relaunch.
+    static func guideScreenRecording() {
+        requestScreenRecording()
+        let alert = NSAlert()
+        alert.messageText = "Enable Screen Recording for Snapture"
+        alert.informativeText = """
+        1. In System Settings → Privacy & Security → Screen Recording, turn ON Snapture.
+        2. Come back here and click “Quit & Reopen” — the permission only applies after a restart.
+        """
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Quit & Reopen")
+        alert.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        switch alert.runModal() {
+        case .alertFirstButtonReturn: openScreenRecordingSettings()
+        case .alertSecondButtonReturn: relaunchApp()
+        default: break
+        }
+    }
 }
