@@ -62,11 +62,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         if recording {
             addItem(menu, "Stop Recording", #selector(stopRecording), key: "6", mods: [.control, .option])
         } else {
-            addItem(menu, "Record Screen Under Cursor + Audio",
+            addItem(menu, "Quick Record (Screen at Pointer)",
                     #selector(recordCursorScreen), key: "6", mods: [.control, .option])
-            let screensItem = NSMenuItem(title: "Record Specific Screen", action: nil, keyEquivalent: "")
-            screensItem.submenu = buildScreensMenu()
-            menu.addItem(screensItem)
+            addItem(menu, "Choose Screen to Record…", #selector(openScreenPicker))
         }
         addItem(menu, recording && RecordingCoordinator.shared.mode == .audioOnly ? "Stop Audio" : "Record Audio Only",
                 #selector(toggleAudioRecording))
@@ -122,37 +120,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         return menu
     }
 
-    private func buildScreensMenu() -> NSMenu {
-        let menu = NSMenu()
-        let displays = RecordingCoordinator.availableDisplays()
-
-        if displays.count > 1 {
-            let all = NSMenuItem(title: "All Displays (\(displays.count)) — separate files",
-                                 action: #selector(recordSelectedScreen(_:)), keyEquivalent: "")
-            all.target = self
-            all.representedObject = "all"
-            menu.addItem(all)
-            menu.addItem(.separator())
-        }
-
-        for (idx, display) in displays.enumerated() {
-            let pixels = "\(Int(display.frame.width * display.scale))×\(Int(display.frame.height * display.scale))"
-            let isMain = display.id == CGMainDisplayID()
-            let title = "Display \(idx + 1): \(display.name)\(isMain ? " (Main)" : "") — \(pixels)"
-            let item = NSMenuItem(title: title, action: #selector(recordSelectedScreen(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = NSNumber(value: display.id)
-            menu.addItem(item)
-        }
-        return menu
-    }
-
     private func buildSettingsMenu(_ s: Settings) -> NSMenu {
         let menu = NSMenu()
         addToggle(menu, "Capture System Audio", s.captureSystemAudio, #selector(toggleSystemAudio))
         addToggle(menu, "Capture Microphone", s.captureMicrophone, #selector(toggleMic))
         addToggle(menu, "Auto-Transcribe Recordings", s.autoTranscribe, #selector(toggleAutoTranscribe))
         addToggle(menu, "Speaker Diarization (WhisperX)", s.enableDiarization, #selector(toggleDiarization))
+        let autoPaste = addItem(menu, "Auto-Paste from History (needs Accessibility)", #selector(enableAutoPaste))
+        autoPaste.state = Permissions.hasAccessibility() ? .on : .off
         menu.addItem(.separator())
 
         let backendHeader = NSMenuItem(title: "Transcription Engine", action: nil, keyEquivalent: "")
@@ -205,13 +180,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         RecordingCoordinator.shared.toggleScreenRecording(selection: .display(RecordingCoordinator.displayUnderCursor()))
     }
     @objc private func stopRecording() { RecordingCoordinator.shared.stopIfRecording() }
-    @objc private func recordSelectedScreen(_ sender: NSMenuItem) {
-        if let token = sender.representedObject as? String, token == "all" {
-            RecordingCoordinator.shared.toggleScreenRecording(selection: .all)
-        } else if let number = sender.representedObject as? NSNumber {
-            RecordingCoordinator.shared.toggleScreenRecording(selection: .display(CGDirectDisplayID(number.uint32Value)))
-        }
-    }
+    @objc private func openScreenPicker() { ScreenPicker.shared.show() }
     @objc private func toggleAudioRecording() { RecordingCoordinator.shared.toggleAudioRecording() }
     @objc private func showClipboard() { ClipboardHistoryController.shared.toggle(relativeTo: statusItem.button) }
     @objc private func openSupportFolder() { NSWorkspace.shared.open(AppInfo.supportDirectory) }
@@ -222,6 +191,16 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func toggleMic() { Settings.shared.captureMicrophone.toggle() }
     @objc private func toggleAutoTranscribe() { Settings.shared.autoTranscribe.toggle() }
     @objc private func toggleDiarization() { Settings.shared.enableDiarization.toggle() }
+
+    @objc private func enableAutoPaste() {
+        if Permissions.hasAccessibility() {
+            showAlert(title: "Auto-Paste Enabled",
+                      message: "Snapture already has Accessibility access. Clicking a clipboard item will paste it into the frontmost app.")
+        } else {
+            Permissions.requestAccessibility()
+            Permissions.openAccessibilitySettings()
+        }
+    }
 
     @objc private func setBackend(_ sender: NSMenuItem) {
         if let raw = sender.representedObject as? String, let b = TranscriptionBackend(rawValue: raw) {

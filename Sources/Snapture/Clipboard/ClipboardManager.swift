@@ -148,7 +148,17 @@ final class ClipboardManager {
             if !urls.isEmpty { pb.writeObjects(urls) }
         }
         lastChangeCount = pb.changeCount
-        if paste { Self.synthesizePaste() }
+        if paste {
+            // Auto-paste needs Accessibility. Only do it when already granted so
+            // we never trigger a permission prompt on a simple click — otherwise
+            // just leave it on the clipboard for a manual ⌘V.
+            if Permissions.hasAccessibility() {
+                Self.synthesizePaste()
+            } else {
+                NotificationCenter.default.post(name: .init("SnaptureStatus"),
+                                                object: "Copied — press ⌘V to paste (enable Auto-Paste in Settings)")
+            }
+        }
     }
 
     func togglePin(_ item: ClipboardItem) {

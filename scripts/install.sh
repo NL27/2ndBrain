@@ -44,6 +44,10 @@ else
 fi
 
 # --- 2. Build + install the app ---------------------------------------------
+echo "==> Ensuring stable signing identity (so permissions persist)…"
+bash "$ROOT/scripts/create-signing-cert.sh" || \
+  echo "    (Could not create a signing identity; falling back to ad-hoc.)"
+
 echo "==> Building app…"
 bash "$ROOT/scripts/build.sh" release
 

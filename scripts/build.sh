@@ -30,11 +30,19 @@ if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
   cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 fi
 
-echo "==> Code signing (ad-hoc)…"
-# Ad-hoc signing with a stable identifier so macOS TCC remembers granted
-# permissions across launches.
+# Prefer a stable self-signed identity so macOS Privacy (TCC) remembers granted
+# permissions across rebuilds. Falls back to ad-hoc if none is installed.
+IDENTITY_NAME="${SNAPTURE_SIGN_IDENTITY:-Snapture Self-Signed}"
+if security find-identity -v 2>/dev/null | grep -q "$IDENTITY_NAME"; then
+  SIGN_ID="$IDENTITY_NAME"
+  echo "==> Code signing with stable identity '$IDENTITY_NAME'…"
+else
+  SIGN_ID="-"
+  echo "==> Code signing (ad-hoc — run scripts/create-signing-cert.sh for persistent permissions)…"
+fi
+
 codesign --force --deep \
-  --sign - \
+  --sign "$SIGN_ID" \
   --identifier "com.dao.snapture" \
   --entitlements "$ROOT/Resources/Snapture.entitlements" \
   "$APP"

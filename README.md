@@ -15,7 +15,7 @@ Native Swift. No Dock icon, no windows — everything lives in the menu bar.
 |------|--------------|
 | **Screenshots** | Drag-select any region across **multiple displays**; image is copied straight to the clipboard. (`⌃⌥4`) |
 | **OCR** | Drag-select a region; recognized text (on-device, Apple Vision) is copied to the clipboard. (`⌃⌥5`) |
-| **Screen recording** | Records a display + **system audio** (ScreenCaptureKit) and the **microphone** simultaneously. (`⌃⌥6`) |
+| **Screen recording** | Records a display + **system audio** (ScreenCaptureKit) and the **microphone** simultaneously. Quick-record the screen under the pointer (`⌃⌥6`), or pick a screen from a **visual picker with live previews** (each physical screen is numbered on-screen), or record **all displays at once**. |
 | **Audio recording** | Microphone-only capture for quick voice notes / meetings. |
 | **Clipboard manager** | Persistent, searchable history of text / images / files with pinning and one-click *paste to frontmost app*. (`⌃⌥V`) |
 | **Transcription** | Local transcription of recordings via **whisper.cpp**, **WhisperX**, or **mlx-whisper**. |
@@ -63,8 +63,26 @@ it.
 
 - **System Settings → Privacy & Security → Screen Recording** → enable *Snapture*
 - **System Settings → Privacy & Security → Microphone** → enable *Snapture*
+- **Accessibility** → only needed if you want *auto-paste* from the clipboard
+  history (Settings ▸ *Auto-Paste from History*). Without it, clicking a history
+  item just copies it so you can press ⌘V yourself — it will **not** nag you.
 
 (Screen Recording is required for screenshots, OCR, and screen recording.)
+
+### Keep permissions across rebuilds (optional, for developers)
+
+Ad-hoc signed builds get a new code hash each rebuild, so macOS forgets your
+privacy grants and re-prompts. To avoid that, create a **stable self-signed
+identity once**:
+
+```bash
+scripts/create-signing-cert.sh
+```
+
+You'll approve a trust dialog (login password) once, and the first build after
+that will ask to use the key — click **Always Allow**. From then on every
+`scripts/build.sh` is signed with the same identity and your Screen
+Recording / Microphone grants persist. `install.sh` runs this automatically.
 
 ## Uninstall
 
