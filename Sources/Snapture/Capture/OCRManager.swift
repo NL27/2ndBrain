@@ -52,10 +52,13 @@ final class OCRManager {
     func copyTextToClipboard(_ text: String) {
         guard !text.isEmpty else {
             Log.info("OCR produced no text")
+            HUD.shared.show("No text found", symbol: "text.viewfinder")
             return
         }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
+        let chars = text.count
+        HUD.shared.show("Copied \(chars) character\(chars == 1 ? "" : "s")", symbol: "text.viewfinder")
     }
 }

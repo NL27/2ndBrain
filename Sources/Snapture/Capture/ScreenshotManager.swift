@@ -55,6 +55,7 @@ final class ScreenshotManager {
         // Mark this as an internally-produced copy so the clipboard manager can
         // store it with rich metadata.
         ClipboardManager.shared.noteInternalImageCopy(nsImage)
+        HUD.shared.show("Screenshot copied", symbol: "camera.viewfinder", thumbnail: nsImage)
     }
 
     private func ensurePermission() -> Bool {
