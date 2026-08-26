@@ -12,11 +12,20 @@ struct CommandBarAction: Identifiable {
     let perform: () -> Void
 }
 
+/// Which half of the Record drawer is being configured.
+enum RecordingTab: String, CaseIterable, Identifiable {
+    case screen, audio
+    var id: String { rawValue }
+    var title: String { self == .screen ? "Screen" : "Audio" }
+    var symbol: String { self == .screen ? "display" : "waveform" }
+}
+
 @MainActor
 final class CommandBarStore: ObservableObject {
     @Published var actions: [CommandBarAction] = []
     /// Shows the recording options drawer beneath the buttons.
     @Published var showingRecordingOptions = false
+    @Published var tab: RecordingTab = .screen
 
     // Mirrors of the persisted settings so the toggles stay live.
     @Published var followMouse = Settings.shared.followMouseWhileRecording {
@@ -25,23 +34,37 @@ final class CommandBarStore: ObservableObject {
     @Published var captureInput = Settings.shared.showInputOverlay {
         didSet { Settings.shared.showInputOverlay = captureInput }
     }
+    @Published var mouseRing = Settings.shared.showMouseRing {
+        didSet { Settings.shared.showMouseRing = mouseRing }
+    }
     @Published var systemAudio = Settings.shared.captureSystemAudio {
         didSet { Settings.shared.captureSystemAudio = systemAudio }
     }
     @Published var microphone = Settings.shared.captureMicrophone {
         didSet { Settings.shared.captureMicrophone = microphone }
     }
+    @Published var showLiveCaptions = Settings.shared.showLiveCaptions {
+        didSet { Settings.shared.showLiveCaptions = showLiveCaptions }
+    }
+    /// Transcribe live (via heed) instead of writing a plain audio recording.
+    @Published var liveTranscription = false
 
     /// Re-reads the settings, in case they were changed from the menu.
     func syncFromSettings() {
         let s = Settings.shared
         if followMouse != s.followMouseWhileRecording { followMouse = s.followMouseWhileRecording }
         if captureInput != s.showInputOverlay { captureInput = s.showInputOverlay }
+        if mouseRing != s.showMouseRing { mouseRing = s.showMouseRing }
         if systemAudio != s.captureSystemAudio { systemAudio = s.captureSystemAudio }
         if microphone != s.captureMicrophone { microphone = s.captureMicrophone }
+        if showLiveCaptions != s.showLiveCaptions { showLiveCaptions = s.showLiveCaptions }
+        liveTranscription = LiveTranscriptionController.shared.isActive
     }
 
-    var startRecording: () -> Void = {}
+    var startScreenRecording: () -> Void = {}
+    var startAudioRecording: () -> Void = {}
+    /// Called when the drawer's content changes height so the window can resize.
+    var requestRelayout: () -> Void = {}
 }
 
 /// A translucent, floating palette of the most-used actions. Opened from the
@@ -57,8 +80,6 @@ final class CommandBar: NSObject, NSWindowDelegate {
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
     private var stateObservers: [NSObjectProtocol] = []
-    /// Where the user last dragged the bar, so it reopens where they left it.
-    private var userOrigin: NSPoint?
 
     // MARK: - Presentation
 
@@ -93,8 +114,6 @@ final class CommandBar: NSObject, NSWindowDelegate {
         stopMonitoring()
         store.showingRecordingOptions = false
         guard let panel, panel.isVisible else { return }
-        // Remember where it was dragged to before it goes away.
-        userOrigin = panel.frame.origin
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.1
             panel.animator().alphaValue = 0
@@ -114,9 +133,8 @@ final class CommandBar: NSObject, NSWindowDelegate {
 
     private func rebuildActions() {
         let recorder = RecordingCoordinator.shared
-        let screenRecording = recorder.isRecording && recorder.mode == .screen
-        let audioRecording = recorder.isRecording && recorder.mode == .audioOnly
         let liveRunning = LiveTranscriptionController.shared.isActive
+        let busy = recorder.isRecording || liveRunning
 
         store.actions = [
             CommandBarAction(id: "capture", title: "Capture Area",
@@ -127,12 +145,17 @@ final class CommandBar: NSObject, NSWindowDelegate {
                              symbol: "text.viewfinder", isRunning: false) { [weak self] in
                 self?.dismissThen { OCRManager.shared.captureRegionAndCopyText() }
             },
-            CommandBarAction(id: "screen", title: screenRecording ? "Stop Screen" : "Record Screen",
-                             symbol: screenRecording ? "stop.circle.fill" : "record.circle",
-                             isRunning: screenRecording) { [weak self] in
+            CommandBarAction(id: "record", title: busy ? "Stop" : "Record",
+                             symbol: busy ? "stop.circle.fill" : "record.circle",
+                             isRunning: busy) { [weak self] in
                 guard let self else { return }
-                if RecordingCoordinator.shared.isRecording {
-                    self.dismissThen { RecordingCoordinator.shared.stopIfRecording() }
+                if busy {
+                    self.dismissThen {
+                        RecordingCoordinator.shared.stopIfRecording()
+                        if LiveTranscriptionController.shared.isActive {
+                            LiveTranscriptionController.shared.stop()
+                        }
+                    }
                 } else {
                     // Reveal the options drawer instead of starting immediately.
                     self.store.syncFromSettings()
@@ -140,27 +163,32 @@ final class CommandBar: NSObject, NSWindowDelegate {
                     self.relayoutAfterDrawerChange()
                 }
             },
-            CommandBarAction(id: "audio", title: audioRecording ? "Stop Audio" : "Record Audio",
-                             symbol: audioRecording ? "stop.circle.fill" : "mic",
-                             isRunning: audioRecording) { [weak self] in
-                self?.dismissThen { RecordingCoordinator.shared.toggleAudioRecording() }
-            },
-            CommandBarAction(id: "live", title: liveRunning ? "Stop Live" : "Live Transcription",
-                             symbol: "waveform", isRunning: liveRunning) { [weak self] in
-                self?.dismissThen { LiveTranscriptionController.shared.toggle() }
-            },
             CommandBarAction(id: "history", title: "History",
                              symbol: "doc.on.clipboard", isRunning: false) { [weak self] in
                 self?.dismissThen { ClipboardHistoryController.shared.toggle(relativeTo: nil) }
             }
         ]
 
-        store.startRecording = { [weak self] in
+        store.startScreenRecording = { [weak self] in
             guard let self, let panel = self.panel else { return }
             // Record the screen this bar is sitting on, decided before it hides.
             let displayID = RecordingCoordinator.display(containing: panel)
             self.dismissThen {
                 RecordingCoordinator.shared.toggleScreenRecording(selection: .display(displayID))
+            }
+        }
+
+        store.startAudioRecording = { [weak self] in
+            guard let self else { return }
+            let live = self.store.liveTranscription
+            self.dismissThen {
+                // heed needs exclusive use of the microphone, so live
+                // transcription replaces the plain recorder rather than joining it.
+                if live {
+                    LiveTranscriptionController.shared.start()
+                } else {
+                    RecordingCoordinator.shared.toggleAudioRecording()
+                }
             }
         }
     }
@@ -197,6 +225,7 @@ final class CommandBar: NSObject, NSWindowDelegate {
         panel.isReleasedWhenClosed = false
         panel.delegate = self
         panel.onEscape = { [weak self] in self?.hide() }
+        store.requestRelayout = { [weak self] in self?.relayoutAfterDrawerChange() }
         // Draggable from any empty area of the bar, plus the explicit grip.
         panel.isMovable = true
         panel.isMovableByWindowBackground = true
@@ -221,22 +250,17 @@ final class CommandBar: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Reopens where the user last dragged it, otherwise centres it in the lower
-    /// third of the screen holding the pointer.
+    /// Always opens in the same spot — centred in the lower third of the screen
+    /// holding the pointer. It can still be dragged while it's open; the next
+    /// time it appears it returns here.
     private func positionPanel(_ panel: CommandBarPanel) {
         let size = panel.contentView?.fittingSize ?? panel.frame.size
-        var frame: NSRect
-        if let origin = userOrigin {
-            frame = NSRect(origin: origin, size: size)
-        } else {
-            let visible = activeScreen().visibleFrame
-            frame = NSRect(x: (visible.midX - size.width / 2).rounded(),
+        let screen = activeScreen()
+        let visible = screen.visibleFrame
+        let frame = NSRect(x: (visible.midX - size.width / 2).rounded(),
                            y: (visible.minY + visible.height * 0.26).rounded(),
                            width: size.width, height: size.height)
-        }
-        // A remembered position can end up off-screen if displays changed.
-        let host = NSScreen.screens.first { $0.frame.intersects(frame) } ?? activeScreen()
-        panel.setFrame(clamp(frame, to: host), display: false)
+        panel.setFrame(clamp(frame, to: screen), display: false)
     }
 
     private func clamp(_ frame: NSRect, to screen: NSScreen) -> NSRect {
@@ -294,11 +318,6 @@ final class CommandBar: NSObject, NSWindowDelegate {
     func windowDidResignKey(_ notification: Notification) {
         hide()
     }
-
-    func windowDidMove(_ notification: Notification) {
-        guard let panel, panel.isVisible else { return }
-        userOrigin = panel.frame.origin
-    }
 }
 
 /// Borderless panel that can still take key events, so Escape closes the bar
@@ -331,6 +350,9 @@ struct CommandBarView: View {
                     .padding(.horizontal, 14)
                     .padding(.top, 10)
                     .padding(.bottom, 12)
+                    .onChange(of: store.tab) { store.requestRelayout() }
+                    .onChange(of: store.captureInput) { store.requestRelayout() }
+                    .onChange(of: store.liveTranscription) { store.requestRelayout() }
             }
         }
         .background(
@@ -346,41 +368,82 @@ struct CommandBarView: View {
     }
 }
 
-/// The options drawer that opens beneath the bar when Record Screen is clicked.
+/// The options drawer that opens beneath the bar when Record is clicked. Screen
+/// and Audio each own their own set of options.
 private struct RecordingOptionsView: View {
     @ObservedObject var store: CommandBarStore
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Screen Recording")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("", selection: $store.tab) {
+                ForEach(RecordingTab.allCases) { tab in
+                    Label(tab.title, systemImage: tab.symbol).tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
 
+            switch store.tab {
+            case .screen: screenOptions
+            case .audio: audioOptions
+            }
+        }
+        .toggleStyle(.checkbox)
+        .font(.system(size: 12))
+        .frame(width: 320, alignment: .leading)
+    }
+
+    private var screenOptions: some View {
+        VStack(alignment: .leading, spacing: 8) {
             Toggle("Follow the mouse (zoomed pan)", isOn: $store.followMouse)
             Toggle("Show mouse clicks & keystrokes", isOn: $store.captureInput)
-            Toggle("Record system audio", isOn: $store.systemAudio)
-            Toggle("Record microphone", isOn: $store.microphone)
+            Toggle("Colour ring around the mouse", isOn: $store.mouseRing)
 
-            if store.captureInput && !Permissions.hasAccessibility() {
-                Text("Keystrokes need Accessibility — clicks only until it's granted.")
+            if store.captureInput {
+                Text(Permissions.hasAccessibility()
+                     ? "Clicks and keys are also written to a .input.jsonl log next to the video."
+                     : "Keystrokes need Accessibility — clicks only until it's granted.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Text("Records the screen this bar is on.")
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
 
-            Button(action: store.startRecording) {
-                Label("Start Recording", systemImage: "record.circle")
+            Button(action: store.startScreenRecording) {
+                Label("Start Screen Recording", systemImage: "record.circle")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .padding(.top, 2)
         }
-        .toggleStyle(.checkbox)
-        .font(.system(size: 12))
-        .frame(width: 300, alignment: .leading)
+    }
+
+    private var audioOptions: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Microphone", isOn: $store.microphone)
+            Toggle("System audio", isOn: $store.systemAudio)
+            Toggle("Live transcription", isOn: $store.liveTranscription)
+
+            if store.liveTranscription {
+                Toggle("Show captions on screen", isOn: $store.showLiveCaptions)
+                    .padding(.leading, 18)
+                Text("Live transcription uses heed and takes the microphone for itself.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Button(action: store.startAudioRecording) {
+                Label(store.liveTranscription ? "Start Live Transcription" : "Start Audio Recording",
+                      systemImage: store.liveTranscription ? "waveform" : "mic")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 2)
+        }
     }
 }
 

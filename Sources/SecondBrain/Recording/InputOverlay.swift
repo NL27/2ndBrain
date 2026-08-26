@@ -1,35 +1,62 @@
 import AppKit
 
-/// Visualises mouse clicks and keystrokes on screen while recording, so they end
-/// up in the captured video. Clicks draw a fading ripple where they happen;
-/// keystrokes appear as a caption near the bottom of the recorded display.
+/// Draws input on screen while recording — click ripples, a keystroke caption,
+/// and an optional coloured ring around the pointer — so everything the user did
+/// is visible in the captured video. It also writes a machine-readable log of
+/// those actions via `InputEventLog`.
 ///
 /// Mouse events need no extra permission. Keystrokes need Accessibility, so the
-/// key caption is skipped (clicks still work) when that isn't granted.
+/// caption and key log are skipped (clicks still work) when it isn't granted.
 @MainActor
 final class InputOverlay {
     static let shared = InputOverlay()
     private init() {}
 
+    struct Options {
+        /// Click ripples + keystroke caption, and the written event log.
+        var showClicksAndKeys: Bool
+        /// Persistent coloured ring following the pointer.
+        var showMouseRing: Bool
+        /// Where to write the JSONL action log, if anywhere.
+        var logURL: URL?
+    }
+
     private var clickWindow: NSWindow?
     private var keyWindow: NSWindow?
     private var keyLabel: NSTextField?
+    private var ringWindow: NSWindow?
     private var monitors: [Any] = []
     private var keyCaptionHideWork: DispatchWorkItem?
     private var recentKeys: [String] = []
+    private var eventLog: InputEventLog?
+    private var options = Options(showClicksAndKeys: false, showMouseRing: false, logURL: nil)
     private(set) var isActive = false
 
     /// Screen whose input is being visualised — matches the recorded display.
     private var screen: NSScreen?
 
-    func start(on screen: NSScreen) {
+    private static let ringDiameter: CGFloat = 58
+
+    func start(on screen: NSScreen, options: Options) {
         guard !isActive else { return }
+        guard options.showClicksAndKeys || options.showMouseRing else { return }
         self.screen = screen
+        self.options = options
         isActive = true
 
-        buildWindows(on: screen)
+        if let logURL = options.logURL, options.showClicksAndKeys {
+            eventLog = InputEventLog(url: logURL)
+        }
+        if options.showClicksAndKeys { buildClickAndKeyWindows(on: screen) }
+        if options.showMouseRing { buildRingWindow() }
         installMonitors()
-        Log.info("Input overlay started\(Permissions.hasAccessibility() ? "" : " (clicks only — no Accessibility)")")
+
+        var notes: [String] = []
+        if options.showClicksAndKeys {
+            notes.append(Permissions.hasAccessibility() ? "clicks + keys" : "clicks only (no Accessibility)")
+        }
+        if options.showMouseRing { notes.append("mouse ring") }
+        Log.info("Input overlay started: \(notes.joined(separator: ", "))")
     }
 
     func stop() {
@@ -41,40 +68,45 @@ final class InputOverlay {
         recentKeys.removeAll()
         clickWindow?.orderOut(nil); clickWindow = nil
         keyWindow?.orderOut(nil); keyWindow = nil
+        ringWindow?.orderOut(nil); ringWindow = nil
         keyLabel = nil
         screen = nil
+        if let eventLog {
+            eventLog.flush()
+            Log.info("Input log written -> \(eventLog.fileURL.lastPathComponent)")
+        }
+        eventLog = nil
     }
 
     // MARK: - Windows
 
-    private func buildWindows(on screen: NSScreen) {
-        let clicks = NSWindow(contentRect: screen.frame, styleMask: .borderless,
+    private func overlayWindow(frame: NSRect) -> NSWindow {
+        let window = NSWindow(contentRect: frame, styleMask: .borderless,
                               backing: .buffered, defer: false)
-        clicks.isOpaque = false
-        clicks.backgroundColor = .clear
-        clicks.level = .screenSaver
-        clicks.ignoresMouseEvents = true
-        clicks.hasShadow = false
-        clicks.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
-        clicks.contentView = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
-        clicks.contentView?.wantsLayer = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.level = .screenSaver
+        window.ignoresMouseEvents = true
+        window.hasShadow = false
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        return window
+    }
+
+    private func buildClickAndKeyWindows(on screen: NSScreen) {
+        let clicks = overlayWindow(frame: screen.frame)
+        let container = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
+        container.wantsLayer = true
+        clicks.contentView = container
         clicks.orderFrontRegardless()
         clickWindow = clicks
 
-        let captionHeight: CGFloat = 54
-        let captionWidth: CGFloat = 520
-        let captionFrame = NSRect(x: screen.frame.midX - captionWidth / 2,
+        let captionSize = NSSize(width: 620, height: 54)
+        let captionFrame = NSRect(x: screen.frame.midX - captionSize.width / 2,
                                   y: screen.visibleFrame.minY + 40,
-                                  width: captionWidth, height: captionHeight)
-        let caption = NSWindow(contentRect: captionFrame, styleMask: .borderless,
-                               backing: .buffered, defer: false)
-        caption.isOpaque = false
-        caption.backgroundColor = .clear
-        caption.level = .screenSaver
-        caption.ignoresMouseEvents = true
-        caption.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+                                  width: captionSize.width, height: captionSize.height)
+        let caption = overlayWindow(frame: captionFrame)
 
-        let blur = NSVisualEffectView(frame: NSRect(origin: .zero, size: captionFrame.size))
+        let blur = NSVisualEffectView(frame: NSRect(origin: .zero, size: captionSize))
         blur.material = .hudWindow
         blur.state = .active
         blur.wantsLayer = true
@@ -96,42 +128,143 @@ final class InputOverlay {
         keyLabel = label
     }
 
+    /// Small window that trails the pointer with a rainbow ring drawn in it.
+    private func buildRingWindow() {
+        let size = Self.ringDiameter
+        let window = overlayWindow(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: size, height: size))
+        view.wantsLayer = true
+
+        let gradient = CAGradientLayer()
+        gradient.frame = view.bounds
+        gradient.type = .conic
+        gradient.startPoint = CGPoint(x: 0.5, y: 0.5)
+        gradient.endPoint = CGPoint(x: 0.5, y: 0)
+        gradient.colors = [
+            NSColor.systemRed, .systemOrange, .systemYellow, .systemGreen,
+            .systemTeal, .systemBlue, .systemPurple, .systemRed
+        ].map { $0.withAlphaComponent(0.95).cgColor }
+
+        // Mask the gradient down to a ring so the pointer stays visible.
+        let ring = CAShapeLayer()
+        let inset = 4.0
+        ring.path = CGPath(ellipseIn: view.bounds.insetBy(dx: inset, dy: inset), transform: nil)
+        ring.fillColor = NSColor.clear.cgColor
+        ring.strokeColor = NSColor.black.cgColor
+        ring.lineWidth = 5
+        gradient.mask = ring
+
+        view.layer?.addSublayer(gradient)
+
+        let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+        spin.fromValue = 0
+        spin.toValue = Double.pi * 2
+        spin.duration = 3.5
+        spin.repeatCount = .infinity
+        gradient.add(spin, forKey: "spin")
+
+        window.contentView = view
+        window.orderFrontRegardless()
+        ringWindow = window
+        moveRing(to: NSEvent.mouseLocation)
+    }
+
     // MARK: - Monitors
 
     private func installMonitors() {
+        if options.showMouseRing {
+            let moveEvents: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged,
+                                                     .rightMouseDragged, .otherMouseDragged]
+            let monitor = NSEvent.addGlobalMonitorForEvents(matching: moveEvents, handler: { [weak self] _ in
+                MainActor.assumeIsolated { self?.moveRing(to: NSEvent.mouseLocation) }
+            })
+            if let monitor { monitors.append(monitor) }
+        }
+
+        guard options.showClicksAndKeys else { return }
+
         let mouseEvents: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
         let mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseEvents, handler: { [weak self] event in
-            MainActor.assumeIsolated {
-                self?.showRipple(at: NSEvent.mouseLocation, rightClick: event.type == .rightMouseDown)
-            }
+            MainActor.assumeIsolated { self?.handleClick(event) }
         })
         if let mouseMonitor { monitors.append(mouseMonitor) }
 
         // Keyboard monitoring is only delivered to trusted (Accessibility) apps.
         guard Permissions.hasAccessibility() else { return }
-        let keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged], handler: { [weak self] event in
-            MainActor.assumeIsolated { self?.showKey(for: event) }
+        let keyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown], handler: { [weak self] event in
+            MainActor.assumeIsolated { self?.handleKey(event) }
         })
         if let keyMonitor { monitors.append(keyMonitor) }
     }
 
-    // MARK: - Click ripple
+    // MARK: - Mouse ring
 
-    private func showRipple(at globalPoint: CGPoint, rightClick: Bool) {
-        guard let window = clickWindow, let container = window.contentView,
-              let screen, NSMouseInRect(globalPoint, screen.frame, false) else { return }
+    private func moveRing(to point: CGPoint) {
+        guard let ringWindow else { return }
+        let size = Self.ringDiameter
+        ringWindow.setFrameOrigin(NSPoint(x: point.x - size / 2, y: point.y - size / 2))
+    }
+
+    // MARK: - Clicks
+
+    private func handleClick(_ event: NSEvent) {
+        let global = NSEvent.mouseLocation
+        let button = event.buttonNumber
+        showRipple(at: global, buttonNumber: button, clickCount: max(1, event.clickCount))
+
+        guard let eventLog else { return }
+        var logged = InputEventLog.Event(t: eventLog.elapsed(), type: "click")
+        logged.button = InputNaming.mouseButton(button)
+        logged.buttonNumber = button
+        logged.clickCount = max(1, event.clickCount)
+        if let local = displayLocalPoint(global) {
+            logged.x = Double(local.x.rounded())
+            logged.y = Double(local.y.rounded())
+        }
+        let modifiers = InputNaming.modifierNames(event.modifierFlags)
+        logged.modifiers = modifiers.isEmpty ? nil : modifiers
+        logged.app = NSWorkspace.shared.frontmostApplication?.localizedName
+        eventLog.record(logged)
+    }
+
+    /// Pointer position inside the recorded display, top-left origin — the same
+    /// space the video frames use.
+    private func displayLocalPoint(_ global: CGPoint) -> CGPoint? {
+        guard let screen, NSMouseInRect(global, screen.frame, false) else { return nil }
+        return CGPoint(x: global.x - screen.frame.minX, y: screen.frame.maxY - global.y)
+    }
+
+    private func showRipple(at globalPoint: CGPoint, buttonNumber: Int, clickCount: Int) {
+        guard let container = clickWindow?.contentView, let screen,
+              NSMouseInRect(globalPoint, screen.frame, false) else { return }
 
         let local = CGPoint(x: globalPoint.x - screen.frame.minX,
                             y: globalPoint.y - screen.frame.minY)
+        let tint = Self.tint(forButton: buttonNumber)
         let diameter: CGFloat = 46
+
         let ripple = CALayer()
         ripple.frame = CGRect(x: local.x - diameter / 2, y: local.y - diameter / 2,
                               width: diameter, height: diameter)
         ripple.cornerRadius = diameter / 2
-        let tint: NSColor = rightClick ? .systemOrange : .systemBlue
         ripple.backgroundColor = tint.withAlphaComponent(0.28).cgColor
-        ripple.borderColor = tint.withAlphaComponent(0.9).cgColor
+        ripple.borderColor = tint.withAlphaComponent(0.95).cgColor
         ripple.borderWidth = 2
+
+        // Which button (and double-clicks) shown in the middle of the ripple, so
+        // the video itself says what was pressed.
+        let badge = CATextLayer()
+        var mark = InputNaming.symbol(forMouseButton: buttonNumber)
+        if clickCount > 1 { mark += "×\(clickCount)" }
+        badge.string = mark
+        badge.font = NSFont.systemFont(ofSize: 15, weight: .bold)
+        badge.fontSize = 15
+        badge.foregroundColor = NSColor.white.cgColor
+        badge.alignmentMode = .center
+        badge.contentsScale = screen.backingScaleFactor
+        badge.frame = CGRect(x: 0, y: diameter / 2 - 10, width: diameter, height: 20)
+        ripple.addSublayer(badge)
+
         container.layer?.addSublayer(ripple)
 
         let grow = CABasicAnimation(keyPath: "transform.scale")
@@ -142,54 +275,49 @@ final class InputOverlay {
         fade.toValue = 0.0
         let group = CAAnimationGroup()
         group.animations = [grow, fade]
-        group.duration = 0.45
+        group.duration = 0.5
         group.timingFunction = CAMediaTimingFunction(name: .easeOut)
         group.isRemovedOnCompletion = false
         group.fillMode = .forwards
         ripple.add(group, forKey: "ripple")
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { ripple.removeFromSuperlayer() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { ripple.removeFromSuperlayer() }
     }
 
-    // MARK: - Key caption
-
-    private func showKey(for event: NSEvent) {
-        guard let description = Self.describe(event) else { return }
-        recentKeys.append(description)
-        if recentKeys.count > 6 { recentKeys.removeFirst(recentKeys.count - 6) }
-        keyLabel?.stringValue = recentKeys.joined(separator: "  ")
-
-        keyWindow?.animator().alphaValue = 1
-        keyCaptionHideWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.recentKeys.removeAll()
-            self?.keyWindow?.animator().alphaValue = 0
+    private static func tint(forButton number: Int) -> NSColor {
+        switch number {
+        case 0: return .systemBlue
+        case 1: return .systemOrange
+        case 2: return .systemGreen
+        default: return .systemPurple
         }
-        keyCaptionHideWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
-    /// Human-readable label for a key press, e.g. "⌘⇧4" or "⏎".
-    private static func describe(_ event: NSEvent) -> String? {
-        var parts = ""
-        let flags = event.modifierFlags
-        if flags.contains(.control) { parts += "⌃" }
-        if flags.contains(.option) { parts += "⌥" }
-        if flags.contains(.shift) { parts += "⇧" }
-        if flags.contains(.command) { parts += "⌘" }
+    // MARK: - Keystrokes
 
-        guard event.type == .keyDown else {
-            // Modifier-only press: show the combination while it's held.
-            return parts.isEmpty ? nil : parts
+    private func handleKey(_ event: NSEvent) {
+        if let symbol = InputNaming.keySymbol(event) {
+            recentKeys.append(symbol)
+            if recentKeys.count > 8 { recentKeys.removeFirst(recentKeys.count - 8) }
+            keyLabel?.stringValue = recentKeys.joined(separator: "  ")
+            keyWindow?.animator().alphaValue = 1
+            keyCaptionHideWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                self?.recentKeys.removeAll()
+                self?.keyWindow?.animator().alphaValue = 0
+            }
+            keyCaptionHideWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.8, execute: work)
         }
 
-        let named: [UInt16: String] = [
-            36: "⏎", 48: "⇥", 49: "space", 51: "⌫", 53: "esc",
-            123: "←", 124: "→", 125: "↓", 126: "↑"
-        ]
-        if let name = named[event.keyCode] { return parts + name }
-        let characters = event.charactersIgnoringModifiers ?? ""
-        guard !characters.isEmpty else { return parts.isEmpty ? nil : parts }
-        return parts + characters.uppercased()
+        guard let eventLog else { return }
+        var logged = InputEventLog.Event(t: eventLog.elapsed(), type: "key")
+        logged.key = InputNaming.keyName(event)
+        logged.combo = InputNaming.keySymbol(event)
+        logged.keyCode = Int(event.keyCode)
+        let modifiers = InputNaming.modifierNames(event.modifierFlags)
+        logged.modifiers = modifiers.isEmpty ? nil : modifiers
+        logged.app = NSWorkspace.shared.frontmostApplication?.localizedName
+        eventLog.record(logged)
     }
 }

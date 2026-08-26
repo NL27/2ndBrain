@@ -103,8 +103,10 @@ final class RecordingCoordinator {
                     captureAudio = false
                 }
                 startMicIfEnabled()
+                let videoURL = screenRecorders.first?.outputURL
                 await MainActor.run {
-                    self.startInputOverlayIfEnabled(displayIDs: displays.map(\.displayID))
+                    self.startInputOverlayIfEnabled(displayIDs: displays.map(\.displayID),
+                                                    videoURL: videoURL)
                     self.setRecording(true)
                 }
                 Log.info("Recording \(displays.count) display(s)")
@@ -139,14 +141,20 @@ final class RecordingCoordinator {
         }
     }
 
-    /// Shows click/keystroke visuals on the recorded screen so they're captured
-    /// in the video. Only meaningful for a single display.
+    /// Shows click/keystroke visuals and the pointer ring on the recorded screen
+    /// so they're captured in the video, and logs the actions beside it.
+    /// Only meaningful for a single display.
     @MainActor
-    private func startInputOverlayIfEnabled(displayIDs: [CGDirectDisplayID]) {
-        guard Settings.shared.showInputOverlay,
+    private func startInputOverlayIfEnabled(displayIDs: [CGDirectDisplayID], videoURL: URL?) {
+        let s = Settings.shared
+        guard s.showInputOverlay || s.showMouseRing,
               let id = displayIDs.first, displayIDs.count == 1,
               let screen = NSScreen.screens.first(where: { $0.displayID == id }) else { return }
-        InputOverlay.shared.start(on: screen)
+        let logURL = videoURL?.deletingPathExtension().appendingPathExtension("input.jsonl")
+        InputOverlay.shared.start(on: screen,
+                                  options: .init(showClicksAndKeys: s.showInputOverlay,
+                                                 showMouseRing: s.showMouseRing,
+                                                 logURL: logURL))
     }
 
     private func startMicIfEnabled() {

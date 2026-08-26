@@ -12,6 +12,8 @@ final class Settings {
         static let autoTranscribe = "autoTranscribe"
         static let followMouseWhileRecording = "followMouseWhileRecording"
         static let showInputOverlay = "showInputOverlay"
+        static let showMouseRing = "showMouseRing"
+        static let showLiveCaptions = "showLiveCaptions"
         static let whisperModel = "whisperModel"
         static let whisperBackend = "whisperBackend"
         static let transcriptionLanguage = "transcriptionLanguage"
@@ -33,6 +35,8 @@ final class Settings {
             Keys.autoTranscribe: true,
             Keys.followMouseWhileRecording: false,
             Keys.showInputOverlay: false,
+            Keys.showMouseRing: false,
+            Keys.showLiveCaptions: true,
             Keys.whisperModel: "base.en",
             Keys.whisperBackend: TranscriptionBackend.whisperCpp.rawValue,
             Keys.transcriptionLanguage: "auto",
@@ -75,6 +79,19 @@ final class Settings {
     var showInputOverlay: Bool {
         get { defaults.bool(forKey: Keys.showInputOverlay) }
         set { defaults.set(newValue, forKey: Keys.showInputOverlay) }
+    }
+
+    /// Keeps a coloured ring around the pointer so it's easy to follow.
+    var showMouseRing: Bool {
+        get { defaults.bool(forKey: Keys.showMouseRing) }
+        set { defaults.set(newValue, forKey: Keys.showMouseRing) }
+    }
+
+    /// Whether the live transcript panel is displayed; the transcript is saved
+    /// either way.
+    var showLiveCaptions: Bool {
+        get { defaults.bool(forKey: Keys.showLiveCaptions) }
+        set { defaults.set(newValue, forKey: Keys.showLiveCaptions) }
     }
 
     var whisperModel: String {
