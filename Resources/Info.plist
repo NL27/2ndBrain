@@ -3,19 +3,21 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>Snapture</string>
+    <string>2nd Brain</string>
     <key>CFBundleDisplayName</key>
-    <string>Snapture</string>
+    <string>2ⁿᵈ Brain</string>
     <key>CFBundleIdentifier</key>
-    <string>com.dao.snapture</string>
+    <string>com.dao.secondbrain</string>
     <key>CFBundleExecutable</key>
-    <string>Snapture</string>
+    <string>SecondBrain</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.4.1</string>
+    <string>0.9.0</string>
     <key>CFBundleVersion</key>
-    <string>7</string>
+    <string>12</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
@@ -23,10 +25,10 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Snapture records the microphone for audio capture and transcription.</string>
+    <string>2ⁿᵈ Brain records the microphone for audio capture and transcription.</string>
     <key>NSCameraUsageDescription</key>
-    <string>Snapture does not use the camera, but the system may request this for AV capture sessions.</string>
+    <string>2ⁿᵈ Brain does not use the camera, but the system may request this for AV capture sessions.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>Snapture pastes clipboard items into the frontmost app on your behalf.</string>
+    <string>2ⁿᵈ Brain pastes clipboard items into the frontmost app on your behalf.</string>
 </dict>
 </plist>

@@ -179,12 +179,18 @@ final class RecordingCoordinator {
         Task {
             await MainActor.run { InputOverlay.shared.stop() }
             var audioForTranscription: URL?
-            let micURL = audioRecorder.stop()
+            var micURL = audioRecorder.stop()
             if mode == .screen {
-                let movURLs = await stopAllScreenRecorders()
+                var movURLs = await stopAllScreenRecorders()
+                // File into the vault before transcribing, so the transcript and
+                // its note end up beside the recording rather than pointing at a
+                // path we are about to move.
+                movURLs = movURLs.map { Self.fileIntoVault($0, kind: .screenRecording) }
+                micURL = micURL.map { Self.fileIntoVault($0, kind: .audioRecording) }
                 audioForTranscription = micURL ?? movURLs.first
                 if !movURLs.isEmpty { revealInFinder(movURLs) }
             } else {
+                micURL = micURL.map { Self.fileIntoVault($0, kind: .audioRecording) }
                 audioForTranscription = micURL
                 if let micURL { revealInFinder([micURL]) }
             }
@@ -201,6 +207,7 @@ final class RecordingCoordinator {
                     let text = try await TranscriptionManager.shared.transcript(for: audioURL, using: .tiron)
                     let outURL = audioURL.deletingPathExtension().appendingPathExtension("txt")
                     try text.write(to: outURL, atomically: true, encoding: .utf8)
+                    VaultWriter.saveTranscript(text, for: audioURL, speakers: Self.speakerCount(in: text))
                     Log.info("Tiron transcript written -> \(outURL.lastPathComponent)")
                     await MainActor.run {
                         NotificationCenter.default.post(name: .init("SecondBrainStatus"),
@@ -236,6 +243,26 @@ final class RecordingCoordinator {
         alert.addButton(withTitle: "No — Plain Transcript")
         NSApp.activate(ignoringOtherApps: true)
         return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// Distinct `Speaker N:` labels in a Tiron transcript, used to tag the note
+    /// so meetings can be filtered by how many people were in them.
+    private static func speakerCount(in transcript: String) -> Int? {
+        var speakers = Set<String>()
+        for line in transcript.split(separator: "\n") {
+            guard let colon = line.firstIndex(of: ":") else { continue }
+            let label = line[line.startIndex..<colon].trimmingCharacters(in: .whitespaces)
+            if !label.isEmpty, label.count < 32 { speakers.insert(label) }
+        }
+        return speakers.isEmpty ? nil : speakers.count
+    }
+
+    /// Moves a finished recording into the vault, carrying its input log along.
+    /// Falls back to the original location if the vault write is off or fails,
+    /// so a recording is never lost to a filing problem.
+    private static func fileIntoVault(_ url: URL, kind: VaultWriter.Kind) -> URL {
+        let inputLog = url.deletingPathExtension().appendingPathExtension("input.jsonl")
+        return VaultWriter.adopt(mediaAt: url, kind: kind, companions: [inputLog]) ?? url
     }
 
     @discardableResult

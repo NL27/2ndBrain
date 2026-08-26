@@ -24,7 +24,6 @@ final class SystemProfiler {
     struct Recommendation {
         let whisperModel: String
         let whisperBackend: TranscriptionBackend
-        let enableDiarization: Bool
         let aiStrategy: String
         let summary: String
     }
@@ -34,16 +33,17 @@ final class SystemProfiler {
     func recommend() -> Recommendation {
         let p = profile
         let model: String
-        var diarization = false
-        let backend: TranscriptionBackend = .whisperCpp
+        // Tiron carries a large-v3-sized checkpoint and decodes twice, so it only
+        // earns its keep on machines with memory and a GPU to spare.
+        var backend: TranscriptionBackend = .whisperCpp
 
         switch (p.isAppleSilicon, p.memoryGB) {
         case (true, let mem) where mem >= 32:
             model = "large-v3"
-            diarization = true
+            backend = .tiron
         case (true, let mem) where mem >= 16:
             model = "medium.en"
-            diarization = true
+            backend = .tiron
         case (true, _):
             model = "small.en"
         case (false, let mem) where mem >= 16:
@@ -53,23 +53,40 @@ final class SystemProfiler {
         }
 
         let aiStrategy: String
-        if p.isAppleSilicon && p.memoryGB >= 16 {
-            aiStrategy = "Run a local model (Ollama/llama.cpp) for privacy; fall back to a cloud API for heavy tasks."
+        if p.isAppleSilicon && p.memoryGB >= 32 {
+            aiStrategy = "oMLX with an 8B–30B MLX model; Ollama optional as a fallback."
+        } else if p.isAppleSilicon && p.memoryGB >= 16 {
+            aiStrategy = "oMLX with Llama 3.2 3B (or similar); leaves RAM for live transcription."
+        } else if p.isAppleSilicon {
+            aiStrategy = "oMLX with a 1B model, or a cloud API for heavier work."
         } else {
             aiStrategy = "Prefer a cloud API — local LLM inference will be slow on this machine."
         }
 
+        let speakers = backend.attributesSpeakers
+            ? "Tiron labels who said what in the same pass"
+            : "not available on \(backend.displayName) — switch to Tiron for meetings"
+
+        let capture = DisplayAdvisor.recommendedTuning()
+        let displays = capture.snapshots.isEmpty
+            ? "no displays reported"
+            : capture.snapshots.map(\.summary).joined(separator: "\n  ")
+
         let summary = """
         Detected: \(p.chipName), \(p.physicalCores) cores, \(String(format: "%.0f", p.memoryGB)) GB RAM, macOS \(p.osVersion).
-        • Whisper model: \(model) (\(backend.displayName))
-        • Speaker diarization: \(diarization ? "recommended" : "off (limited resources)")
-        • AI: \(aiStrategy)
+        • Recording transcription: \(backend.displayName)\(backend.usesWhisperModel ? ", model \(model)" : "")
+        • Speaker attribution: \(speakers)
+        • Live transcription: heed (⌃⌥T)
+        • Local AI: \(aiStrategy)
+        • Displays:
+          \(displays)
+        • Capture Area: native framebuffer pixels
+        • OCR: upscale up to \(capture.ocrMaxUpscale)× toward \(capture.ocrTargetShortestSide) px
         """
 
         return Recommendation(
             whisperModel: model,
             whisperBackend: backend,
-            enableDiarization: diarization,
             aiStrategy: aiStrategy,
             summary: summary
         )
@@ -87,16 +104,18 @@ final class SystemProfiler {
             // Seed sensible defaults derived from the hardware.
             Settings.shared.whisperModel = rec.whisperModel
             Settings.shared.whisperBackend = rec.whisperBackend
-            Settings.shared.enableDiarization = rec.enableDiarization
             Log.info("Applied recommended settings:\n\(rec.summary)")
             presentRecommendation(rec)
         }
+        // Displays are independent of chip/RAM: a first install on another Mac,
+        // or plugging in a different monitor, retunes Capture Area and OCR.
+        DisplayAdvisor.applyRecommendedSettingsIfNeeded()
     }
 
     func presentRecommendation(_ rec: Recommendation) {
         DispatchQueue.main.async {
             let alert = NSAlert()
-            alert.messageText = "Snapture — Recommended Setup"
+            alert.messageText = "\(AppInfo.name) — Recommended Setup"
             alert.informativeText = rec.summary
             alert.addButton(withTitle: "Use Recommended")
             alert.addButton(withTitle: "Keep Current")

@@ -15,7 +15,12 @@ final class Settings {
         static let showMouseRing = "showMouseRing"
         static let showLiveCaptions = "showLiveCaptions"
         static let ocrLanguageCorrection = "ocrLanguageCorrection"
+        static let ocrTargetShortestSide = "ocrTargetShortestSide"
+        static let ocrMaxUpscale = "ocrMaxUpscale"
+        static let lastDisplaySignature = "lastDisplaySignature"
         static let dismissedDisplayHint = "dismissedDisplayHint"
+        static let vaultRoot = "vaultRoot"
+        static let saveCapturesToVault = "saveCapturesToVault"
         static let whisperModel = "whisperModel"
         static let whisperBackend = "whisperBackend"
         static let transcriptionLanguage = "transcriptionLanguage"
@@ -40,6 +45,9 @@ final class Settings {
             Keys.showMouseRing: false,
             Keys.showLiveCaptions: true,
             Keys.ocrLanguageCorrection: false,
+            Keys.ocrTargetShortestSide: 800,
+            Keys.ocrMaxUpscale: 4,
+            Keys.saveCapturesToVault: true,
             Keys.whisperModel: "base.en",
             Keys.whisperBackend: TranscriptionBackend.whisperCpp.rawValue,
             Keys.transcriptionLanguage: "auto",
@@ -104,10 +112,58 @@ final class Settings {
         set { defaults.set(newValue, forKey: Keys.ocrLanguageCorrection) }
     }
 
+    /// Shortest side, in pixels, that OCR tries to reach by upscaling a capture.
+    /// Set from the attached displays on first install (and when they change).
+    var ocrTargetShortestSide: Int {
+        get {
+            let value = defaults.integer(forKey: Keys.ocrTargetShortestSide)
+            return value > 0 ? value : 800
+        }
+        set { defaults.set(newValue, forKey: Keys.ocrTargetShortestSide) }
+    }
+
+    /// Cap on that upscale so a full-screen grab on a 5K panel does not explode.
+    var ocrMaxUpscale: Int {
+        get {
+            let value = defaults.integer(forKey: Keys.ocrMaxUpscale)
+            return value > 0 ? value : 4
+        }
+        set { defaults.set(newValue, forKey: Keys.ocrMaxUpscale) }
+    }
+
+    /// Last measured display layout; a new Mac or monitor re-tunes OCR/capture.
+    var lastDisplaySignature: String? {
+        get { defaults.string(forKey: Keys.lastDisplaySignature) }
+        set { defaults.set(newValue, forKey: Keys.lastDisplaySignature) }
+    }
+
     /// Display mode the non-Retina capture-quality hint was already shown for.
     var dismissedDisplayHint: String? {
         get { defaults.string(forKey: Keys.dismissedDisplayHint) }
         set { defaults.set(newValue, forKey: Keys.dismissedDisplayHint) }
+    }
+
+    /// The Obsidian vault and VS Code folder the app files everything into.
+    /// Registered as a default lazily because it depends on the home directory.
+    var vaultRoot: URL {
+        get {
+            if let path = defaults.string(forKey: Keys.vaultRoot), !path.isEmpty {
+                return URL(fileURLWithPath: path)
+            }
+            return Self.defaultVaultRoot
+        }
+        set { defaults.set(newValue.path, forKey: Keys.vaultRoot) }
+    }
+
+    static let defaultVaultRoot = FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("Desktop/2nd Brain", isDirectory: true)
+
+    /// Writes screenshots, OCR text, recordings and transcripts into the vault
+    /// alongside the clipboard, each with a tagged markdown note.
+    var saveCapturesToVault: Bool {
+        get { defaults.bool(forKey: Keys.saveCapturesToVault) }
+        set { defaults.set(newValue, forKey: Keys.saveCapturesToVault) }
     }
 
     var whisperModel: String {

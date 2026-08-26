@@ -128,7 +128,7 @@ final class AIConnector {
 
 /// Minimal Keychain wrapper for storing AI API keys.
 enum Keychain {
-    private static let service = "com.dao.snapture.ai"
+    private static let service = "com.dao.secondbrain.ai"
 
     static func set(_ value: String, account: String) {
         let data = Data(value.utf8)

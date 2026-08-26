@@ -61,7 +61,9 @@ final class OCRManager {
         let shortest = CGFloat(min(image.width, image.height))
         guard shortest > 0 else { return image }
 
-        let factor = min(4, max(1, (Self.targetShortestSide / shortest).rounded(.down)))
+        let target = CGFloat(max(200, Settings.shared.ocrTargetShortestSide))
+        let maxFactor = CGFloat(max(1, Settings.shared.ocrMaxUpscale))
+        let factor = min(maxFactor, max(1, (target / shortest).rounded(.down)))
         guard factor > 1 else { return image }
 
         let width = Int(CGFloat(image.width) * factor)
@@ -81,9 +83,6 @@ final class OCRManager {
         context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         return context.makeImage() ?? image
     }
-
-    /// Rough pixel height that gives the accurate recognizer plenty to work with.
-    private static let targetShortestSide: CGFloat = 800
 
     /// Groups observations into visual rows so multi-column captures read
     /// left-to-right instead of interleaving columns.
@@ -137,6 +136,7 @@ final class OCRManager {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
+        VaultWriter.save(text: text)
         let chars = text.count
         HUD.shared.show("Copied \(chars) character\(chars == 1 ? "" : "s")", symbol: "text.viewfinder")
     }

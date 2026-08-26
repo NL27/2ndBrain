@@ -98,6 +98,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         addItem(menu, setupMenuTitle, #selector(showSetup))
         addItem(menu, "System Info & Recommendations…", #selector(showRecommendations))
+        addItem(menu, "Open Vault in Obsidian", #selector(openVaultInObsidian))
+        addItem(menu, "Open Vault Folder", #selector(openVaultFolder))
         addItem(menu, "Open Data Folder", #selector(openSupportFolder))
         menu.addItem(.separator())
 
@@ -153,6 +155,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         addToggle(menu, "Auto-Transcribe Recordings", s.autoTranscribe, #selector(toggleAutoTranscribe))
         addToggle(menu, "Spell-Correct OCR (off keeps code exact)",
                   s.ocrLanguageCorrection, #selector(toggleOCRCorrection))
+        addToggle(menu, "File Captures into the Vault",
+                  s.saveCapturesToVault, #selector(toggleSaveToVault))
         let autoPaste = addItem(menu, "Auto-Paste from History (needs Accessibility)", #selector(enableAutoPaste))
         autoPaste.state = Permissions.hasAccessibility() ? .on : .off
         menu.addItem(.separator())
@@ -257,6 +261,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func toggleLiveTranscription() { LiveTranscriptionController.shared.toggle() }
     @objc private func showClipboard() { ClipboardHistoryController.shared.toggle(relativeTo: statusItem.button) }
     @objc private func openSupportFolder() { NSWorkspace.shared.open(AppInfo.supportDirectory) }
+    @objc private func openVaultFolder() { NSWorkspace.shared.open(Settings.shared.vaultRoot) }
+
+    /// obsidian://open is the documented way to jump straight to a vault by path.
+    @objc private func openVaultInObsidian() {
+        let path = Settings.shared.vaultRoot.path
+        var components = URLComponents()
+        components.scheme = "obsidian"
+        components.host = "open"
+        components.queryItems = [URLQueryItem(name: "path", value: path)]
+        guard let url = components.url else { return }
+        NSWorkspace.shared.open(url)
+    }
     @objc private func showSetup() { SetupWindowController.shared.present() }
     @objc private func showRecommendations() { SystemProfiler.shared.presentRecommendation(SystemProfiler.shared.recommend()) }
     @objc private func quit() { NSApp.terminate(nil) }
@@ -265,6 +281,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func toggleMic() { Settings.shared.captureMicrophone.toggle() }
     @objc private func toggleAutoTranscribe() { Settings.shared.autoTranscribe.toggle() }
     @objc private func toggleOCRCorrection() { Settings.shared.ocrLanguageCorrection.toggle() }
+    @objc private func toggleSaveToVault() { Settings.shared.saveCapturesToVault.toggle() }
     @objc private func toggleRefineLive() { Settings.shared.refineLiveWithTiron.toggle() }
 
     @objc private func toggleLaunchAtLogin() {

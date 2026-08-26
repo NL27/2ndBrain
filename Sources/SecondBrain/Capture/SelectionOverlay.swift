@@ -174,7 +174,7 @@ final class SelectionView: NSView {
             return
         }
         let displayID = screenRef.displayID
-        let scale = screenRef.backingScaleFactor
+        let scale = DisplayAdvisor.pixelScale(of: displayID, screen: screenRef)
         let region = CaptureRegion(displayID: displayID,
                                    rectInPoints: Self.pixelAlign(currentRect, scale: scale),
                                    scale: scale,
@@ -212,8 +212,14 @@ final class SelectionView: NSView {
         path.lineWidth = 2
         path.stroke()
 
-        // Dimensions label.
-        let dims = "\(Int(currentRect.width)) × \(Int(currentRect.height))"
+        // Dimensions in points, plus pixels when the framebuffer is denser.
+        let scale = DisplayAdvisor.pixelScale(of: screenRef.displayID, screen: screenRef)
+        let dims: String
+        if scale > 1.01 {
+            dims = "\(Int(currentRect.width)) × \(Int(currentRect.height)) pt  ·  \(Int((currentRect.width * scale).rounded())) × \(Int((currentRect.height * scale).rounded())) px"
+        } else {
+            dims = "\(Int(currentRect.width)) × \(Int(currentRect.height))"
+        }
         let attrs: [NSAttributedString.Key: Any] = [
             .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: NSColor.white,

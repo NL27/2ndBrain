@@ -21,3 +21,6 @@ models/
 # Local secrets
 .env
 Secrets.plist
+
+# Python bytecode from setup helpers
+scripts/__pycache__/

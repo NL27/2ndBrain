@@ -347,6 +347,11 @@ final class LiveTranscriptionController: NSObject {
         }
         let url = Recordings.newURL(ext: "txt", prefix: "live")
         try contents.write(to: url, atomically: true, encoding: .utf8)
+        let speakers = Set(result.turns.map(\.speaker))
+        VaultWriter.saveTranscript(body,
+                                   for: nil,
+                                   kind: .liveTranscript,
+                                   speakers: speakers.isEmpty ? nil : speakers.count)
         Log.info("Live transcript written -> \(url.lastPathComponent)")
         return url
     }

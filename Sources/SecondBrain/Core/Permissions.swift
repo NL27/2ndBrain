@@ -60,6 +60,14 @@ enum Permissions {
         }
     }
 
+    /// The vault lives on the Desktop, which macOS gates behind Files and
+    /// Folders. Denying it makes captures stop being filed, silently.
+    static func openFilesAndFoldersSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// Relaunches the app. Screen Recording permission only takes effect after a
     /// restart, so we offer this once the user has granted it in System Settings.
     static func relaunchApp() {
@@ -76,9 +84,9 @@ enum Permissions {
     static func guideScreenRecording() {
         requestScreenRecording()
         let alert = NSAlert()
-        alert.messageText = "Enable Screen Recording for Snapture"
+        alert.messageText = "Enable Screen Recording for 2ⁿᵈ Brain"
         alert.informativeText = """
-        1. In System Settings → Privacy & Security → Screen Recording, turn ON Snapture.
+        1. In System Settings → Privacy & Security → Screen Recording, turn ON 2ⁿᵈ Brain.
         2. Come back here and click “Quit & Reopen” — the permission only applies after a restart.
         """
         alert.addButton(withTitle: "Open Settings")

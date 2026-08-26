@@ -82,21 +82,29 @@ final class ClipboardManager {
 
     /// Called by ScreenshotManager when it writes an image to the pasteboard,
     /// so we record it without double-counting on the next poll.
-    func noteInternalImageCopy(_ image: NSImage) {
+    func noteInternalImageCopy(_ image: NSImage, png: Data? = nil) {
         lastChangeCount = NSPasteboard.general.changeCount
         ignoreNextChange = true
-        store(image: image, sourceApp: AppInfo.name)
+        if let png {
+            store(png: png, sourceApp: AppInfo.name)
+        } else {
+            store(image: image, sourceApp: AppInfo.name)
+        }
+    }
+
+    private func store(png: Data, sourceApp: String?) {
+        let filename = "\(UUID().uuidString).png"
+        let url = imagesDir.appendingPathComponent(filename)
+        try? png.write(to: url)
+        add(ClipboardItem(id: UUID(), kind: .image, text: nil, imageFilename: filename,
+                          filePaths: nil, date: Date(), sourceApp: sourceApp, pinned: false))
     }
 
     private func store(image: NSImage, sourceApp: String?) {
         guard let tiff = image.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff),
               let png = rep.representation(using: .png, properties: [:]) else { return }
-        let filename = "\(UUID().uuidString).png"
-        let url = imagesDir.appendingPathComponent(filename)
-        try? png.write(to: url)
-        add(ClipboardItem(id: UUID(), kind: .image, text: nil, imageFilename: filename,
-                          filePaths: nil, date: Date(), sourceApp: sourceApp, pinned: false))
+        store(png: png, sourceApp: sourceApp)
     }
 
     // MARK: - Mutations
@@ -155,7 +163,7 @@ final class ClipboardManager {
             if Permissions.hasAccessibility() {
                 Self.synthesizePaste()
             } else {
-                NotificationCenter.default.post(name: .init("SnaptureStatus"),
+                NotificationCenter.default.post(name: .init("SecondBrainStatus"),
                                                 object: "Copied — press ⌘V to paste (enable Auto-Paste in Settings)")
             }
         }

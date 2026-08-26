@@ -4,29 +4,61 @@ import AppKit
 /// Supported local transcription engines.
 enum TranscriptionBackend: String, CaseIterable {
     case whisperCpp   // whisper.cpp — fastest native, Metal accelerated
-    case whisperX     // WhisperX — word timestamps + speaker diarization
     case mlxWhisper   // mlx-whisper — Apple Silicon MLX backend
+    case tiron        // Trelis Tiron — multi-speaker meetings, transcript + speakers in one pass
 
     var displayName: String {
         switch self {
         case .whisperCpp: return "whisper.cpp"
-        case .whisperX: return "WhisperX"
         case .mlxWhisper: return "mlx-whisper"
+        case .tiron: return "Tiron (multi-speaker meetings)"
         }
     }
 
-    /// Whether this backend can produce speaker labels (diarization).
-    var supportsDiarization: Bool { self == .whisperX }
+    /// Whether the engine labels who said what, without a separate diarizer.
+    var attributesSpeakers: Bool { self == .tiron }
+
+    /// Tiron ships its own checkpoint, so the ggml model setting doesn't apply.
+    var usesWhisperModel: Bool { self != .tiron }
 }
 
 /// Runs local transcription (and optional speaker diarization) on a recording.
 /// Heavy lifting is delegated to an installed CLI engine; this class converts
 /// audio to 16 kHz mono WAV, invokes the engine, and surfaces the transcript.
-final class TranscriptionManager {
+final class TranscriptionManager: Sendable {
     static let shared = TranscriptionManager()
     private init() {}
 
-    private let queue = DispatchQueue(label: "com.dao.snapture.transcription", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.dao.secondbrain.transcription", qos: .userInitiated)
+
+    /// Whether the engine's CLI is installed, so callers can offer it or not.
+    func isInstalled(_ backend: TranscriptionBackend) -> Bool {
+        switch backend {
+        case .whisperCpp: return locate(["whisper-cli", "whisper-cpp", "main"]) != nil
+        case .mlxWhisper: return locate(["mlx_whisper"]) != nil
+        case .tiron: return locate(["tiron"]) != nil
+        }
+    }
+
+    /// Transcribes a file with one specific engine and hands back the text,
+    /// leaving the file's own sidecar transcript alone. Used to re-examine a live
+    /// session's audio with Tiron for who-said-what.
+    func transcript(for url: URL, using backend: TranscriptionBackend) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                let scratch = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("secondbrain-\(UUID().uuidString)", isDirectory: true)
+                defer { try? FileManager.default.removeItem(at: scratch) }
+                do {
+                    try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+                    let wav = try self.convertToWav(url, in: scratch)
+                    continuation.resume(returning: try self.runBackend(on: wav, backend: backend))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
 
     func transcribe(url: URL) {
         queue.async {
@@ -34,9 +66,10 @@ final class TranscriptionManager {
                 Log.info("Transcription started for \(url.lastPathComponent)")
                 self.notify("Transcribing \(url.lastPathComponent)…")
                 let wav = try self.convertToWav(url)
-                let transcript = try self.runBackend(on: wav)
+                let transcript = try self.runBackend(on: wav, backend: Settings.shared.whisperBackend)
                 let outURL = url.deletingPathExtension().appendingPathExtension("txt")
                 try transcript.write(to: outURL, atomically: true, encoding: .utf8)
+                VaultWriter.saveTranscript(transcript, for: url)
                 Log.info("Transcript written -> \(outURL.lastPathComponent)")
                 self.notify("Transcript ready: \(outURL.lastPathComponent)")
                 DispatchQueue.main.async { NSWorkspace.shared.activateFileViewerSelecting([outURL]) }
@@ -49,18 +82,16 @@ final class TranscriptionManager {
 
     // MARK: - Backend invocation
 
-    private func runBackend(on wav: URL) throws -> String {
-        let backend = Settings.shared.whisperBackend
+    private func runBackend(on wav: URL, backend: TranscriptionBackend) throws -> String {
         let model = Settings.shared.whisperModel
-        let diarize = Settings.shared.enableDiarization && backend.supportsDiarization
 
         switch backend {
         case .whisperCpp:
             return try runWhisperCpp(wav: wav, model: model)
-        case .whisperX:
-            return try runWhisperX(wav: wav, model: model, diarize: diarize)
         case .mlxWhisper:
             return try runMlxWhisper(wav: wav, model: model)
+        case .tiron:
+            return try runTiron(wav: wav)
         }
     }
 
@@ -76,21 +107,21 @@ final class TranscriptionManager {
         return (try? String(contentsOf: txt, encoding: .utf8)) ?? "(no text produced)"
     }
 
-    private func runWhisperX(wav: URL, model: String, diarize: Bool) throws -> String {
-        guard let exe = locate(["whisperx"]) else {
-            throw err("WhisperX not found. Run scripts/install.sh to install it.")
+    /// Tiron transcribes and attributes speakers in one decoding pass, then links
+    /// window-local speakers across the whole meeting — so no separate diarizer.
+    private func runTiron(wav: URL) throws -> String {
+        guard let exe = locate(["tiron"]) else {
+            throw err("Tiron not found. Open 2ⁿᵈ Brain ▸ Setup to install it.")
         }
-        var args = [wav.path, "--model", model, "--output_format", "txt",
-                    "--output_dir", wav.deletingLastPathComponent().path]
-        if diarize {
-            args += ["--diarize"]
-            if let token = ProcessInfo.processInfo.environment["HF_TOKEN"] {
-                args += ["--hf_token", token]
-            }
-        }
+        let out = wav.deletingPathExtension().appendingPathExtension("txt")
+        var args = [wav.path, "--format", "text", "--output", out.path,
+                    "--language", Settings.shared.transcriptionLanguage]
+        let maxSpeakers = Settings.shared.tironMaxSpeakers
+        if maxSpeakers > 0 { args += ["--max-speakers", String(maxSpeakers)] }
+
+        notify("Transcribing with Tiron…")
         _ = try run(exe, args)
-        let txt = wav.deletingPathExtension().appendingPathExtension("txt")
-        return (try? String(contentsOf: txt, encoding: .utf8)) ?? "(no text produced)"
+        return (try? String(contentsOf: out, encoding: .utf8)) ?? "(no text produced)"
     }
 
     private func runMlxWhisper(wav: URL, model: String) throws -> String {
@@ -106,7 +137,9 @@ final class TranscriptionManager {
 
     // MARK: - Audio conversion (-> 16 kHz mono WAV)
 
-    func convertToWav(_ input: URL) throws -> URL {
+    /// Converts to the 16 kHz mono WAV every engine expects. `directory` keeps the
+    /// intermediate out of folders we don't own (heed's recordings, say).
+    func convertToWav(_ input: URL, in directory: URL? = nil) throws -> URL {
         let asset = AVURLAsset(url: input)
         guard let reader = try? AVAssetReader(asset: asset) else {
             throw err("Could not read audio from \(input.lastPathComponent)")
@@ -127,7 +160,9 @@ final class TranscriptionManager {
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: readerSettings)
         reader.add(output)
 
-        let outURL = input.deletingPathExtension().appendingPathExtension("16k.wav")
+        let base = directory?.appendingPathComponent(input.deletingPathExtension().lastPathComponent)
+            ?? input.deletingPathExtension()
+        let outURL = base.appendingPathExtension("16k.wav")
         try? FileManager.default.removeItem(at: outURL)
         let writer = try AVAssetWriter(outputURL: outURL, fileType: .wav)
         let writerInput = AVAssetWriterInput(mediaType: .audio, outputSettings: readerSettings)
@@ -139,7 +174,7 @@ final class TranscriptionManager {
         reader.startReading()
 
         let sem = DispatchSemaphore(value: 0)
-        let pump = DispatchQueue(label: "com.dao.snapture.wav-pump")
+        let pump = DispatchQueue(label: "com.dao.secondbrain.wav-pump")
         writerInput.requestMediaDataWhenReady(on: pump) {
             while writerInput.isReadyForMoreMediaData {
                 if let buffer = output.copyNextSampleBuffer() {
@@ -181,7 +216,10 @@ final class TranscriptionManager {
     private func locate(_ names: [String]) -> URL? {
         var dirs = [
             AppInfo.supportDirectory.appendingPathComponent("bin").path,
-            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"
+            "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin",
+            // pipx / uv tool installs (tiron, mlx-whisper) land here, and a GUI
+            // app launched from Finder doesn't inherit a login shell's PATH.
+            FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin").path
         ]
         if let path = ProcessInfo.processInfo.environment["PATH"] {
             dirs += path.split(separator: ":").map(String.init)
@@ -216,13 +254,13 @@ final class TranscriptionManager {
     }
 
     private func err(_ message: String) -> NSError {
-        NSError(domain: "Snapture.Transcription", code: -1, userInfo: [NSLocalizedDescriptionKey: message])
+        NSError(domain: "SecondBrain.Transcription", code: -1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     private func notify(_ message: String) {
         Log.info(message)
         DispatchQueue.main.async {
-            NotificationCenter.default.post(name: .init("SnaptureStatus"), object: message)
+            NotificationCenter.default.post(name: .init("SecondBrainStatus"), object: message)
         }
     }
 }

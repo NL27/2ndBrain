@@ -1,12 +1,10 @@
 import AppKit
 
-/// Detects a display running a non-HiDPI mode. macOS then renders only one
-/// pixel per point, so captures and OCR from that screen are soft no matter how
-/// carefully we ask for pixels — the detail was never drawn. Switching to a
-/// HiDPI mode of roughly the same usable size is the only real fix, so surface
-/// it once per mode instead of silently returning blurry images.
+/// Inspects connected displays so Capture Area and OCR can be tuned to the
+/// pixels that actually exist, and so a first install on a different Mac does
+/// not inherit the previous machine's Retina assumptions.
 enum DisplayAdvisor {
-    struct Advice {
+    struct Advice: Sendable {
         let currentPoints: CGSize
         let suggestedPoints: CGSize
         let suggestedPixels: CGSize
@@ -18,6 +16,120 @@ enum DisplayAdvisor {
             guard now > 0 else { return 1 }
             return (suggestedPixels.width * suggestedPixels.height) / now
         }
+    }
+
+    /// One connected screen, measured in both points and framebuffer pixels.
+    struct Snapshot: Identifiable, Sendable {
+        let id: CGDirectDisplayID
+        let name: String
+        let points: CGSize
+        let pixels: CGSize
+        let scale: CGFloat
+        let advice: Advice?
+
+        var isHiDPI: Bool { scale > 1.01 }
+
+        var summary: String {
+            let mode = isHiDPI
+                ? "Retina \(String(format: "%.0f", scale))×"
+                : "1× (non-Retina)"
+            return "\(name): \(Int(points.width))×\(Int(points.height)) pt · \(Int(pixels.width))×\(Int(pixels.height)) px · \(mode)"
+        }
+    }
+
+    /// OCR and capture knobs derived from the weakest (lowest-scale) display,
+    /// because that is the one that will otherwise produce soft glyphs.
+    struct CaptureTuning: Sendable {
+        let ocrTargetShortestSide: Int
+        let ocrMaxUpscale: Int
+        let minScale: CGFloat
+        let snapshots: [Snapshot]
+
+        var blurb: String {
+            "Capture Area uses native framebuffer pixels (\(String(format: "%.0f", minScale))×). OCR enlarges selections up to \(ocrMaxUpscale)× toward \(ocrTargetShortestSide) px so glyphs stay readable on this density."
+        }
+    }
+
+    /// Point-to-pixel scale of the framebuffer, not `backingScaleFactor`. The
+    /// latter reported 1× here on a Retina panel running a non-HiDPI mode, which
+    /// made the selection overlay snap to the wrong grid.
+    static func pixelScale(of displayID: CGDirectDisplayID, screen: NSScreen? = nil) -> CGFloat {
+        let fallback = max(1, screen?.backingScaleFactor ?? 1)
+        guard let mode = CGDisplayCopyDisplayMode(displayID), mode.width > 0, mode.pixelWidth > 0 else {
+            return fallback
+        }
+        let fromMode = CGFloat(mode.pixelWidth) / CGFloat(mode.width)
+        return max(fromMode, fallback)
+    }
+
+    static func snapshots() -> [Snapshot] {
+        NSScreen.screens.map { screen in
+            let id = screen.displayID
+            let points = screen.frame.size
+            let scale = pixelScale(of: id, screen: screen)
+            let pixels: CGSize
+            if let mode = CGDisplayCopyDisplayMode(id), mode.pixelWidth > 0 {
+                pixels = CGSize(width: CGFloat(mode.pixelWidth), height: CGFloat(mode.pixelHeight))
+            } else {
+                pixels = CGSize(width: points.width * scale, height: points.height * scale)
+            }
+            return Snapshot(
+                id: id,
+                name: screen.localizedName,
+                points: points,
+                pixels: pixels,
+                scale: scale,
+                advice: advice(for: id)
+            )
+        }
+    }
+
+    /// Stable enough to notice a new Mac, a new monitor, or a resolution change.
+    static func displaySignature() -> String {
+        snapshots()
+            .map { "\($0.id):\($0.pixels.width)x\($0.pixels.height)@\(String(format: "%.2f", $0.scale))" }
+            .sorted()
+            .joined(separator: ",")
+    }
+
+    static func recommendedTuning(from snapshots: [Snapshot]? = nil) -> CaptureTuning {
+        let snaps = snapshots ?? Self.snapshots()
+        let minScale = snaps.map(\.scale).min() ?? 2
+        // Vision wants glyphs tens of pixels tall. A 1× UI label is ~11 px; a
+        // 2× one is already ~22. Cap the upscale so a full-screen grab does not
+        // balloon past a few thousand pixels on a side.
+        let target: Int
+        let maxUpscale: Int
+        switch minScale {
+        case ..<1.5:
+            target = 1200
+            maxUpscale = 8
+        case 1.5..<2.5:
+            target = 800
+            maxUpscale = 4
+        default:
+            target = 600
+            maxUpscale = 3
+        }
+        return CaptureTuning(
+            ocrTargetShortestSide: target,
+            ocrMaxUpscale: maxUpscale,
+            minScale: minScale,
+            snapshots: snaps
+        )
+    }
+
+    /// First install, a different Mac, or a display change: rewrite OCR and
+    /// Capture Area settings from the screens that are actually attached.
+    static func applyRecommendedSettingsIfNeeded() {
+        let signature = displaySignature()
+        guard Settings.shared.lastDisplaySignature != signature else { return }
+
+        let tuning = recommendedTuning()
+        Settings.shared.lastDisplaySignature = signature
+        Settings.shared.ocrTargetShortestSide = tuning.ocrTargetShortestSide
+        Settings.shared.ocrMaxUpscale = tuning.ocrMaxUpscale
+        Log.info("Display tuning applied:\n\(tuning.blurb)")
     }
 
     /// Nil when the display already renders at HiDPI, or when no better mode of

@@ -78,8 +78,8 @@ final class ScreenshotManager {
     /// capture. `backingScaleFactor` is the fallback when the mode is unknown.
     private static func framebufferSize(of region: CaptureRegion) -> CGSize {
         let points = region.screen.frame.size
-        let fallback = CGSize(width: points.width * max(1, region.scale),
-                              height: points.height * max(1, region.scale))
+        let fallback = CGSize(width: points.width * max(1, DisplayAdvisor.pixelScale(of: region.displayID, screen: region.screen)),
+                              height: points.height * max(1, DisplayAdvisor.pixelScale(of: region.displayID, screen: region.screen)))
         guard let mode = CGDisplayCopyDisplayMode(region.displayID) else { return fallback }
         let modePixels = CGSize(width: CGFloat(mode.pixelWidth), height: CGFloat(mode.pixelHeight))
         guard modePixels.width > 0, modePixels.height > 0 else { return fallback }
@@ -125,7 +125,11 @@ final class ScreenshotManager {
             pb.setData(tiff, forType: .tiff)
         }
         ClipboardManager.shared.noteInternalImageCopy(nsImage, png: png)
-        HUD.shared.show("Screenshot copied", symbol: "camera.viewfinder", thumbnail: nsImage)
+        // Filing into the vault is additive: the clipboard is still the fast path.
+        let filed = VaultWriter.save(image: cgImage, pointSize: pointSize) != nil
+        HUD.shared.show(filed ? "Screenshot copied and filed" : "Screenshot copied",
+                        symbol: "camera.viewfinder",
+                        thumbnail: nsImage)
     }
 
     /// Point-sized NSImage wrapping the full-resolution bitmap (correct Retina DPI).

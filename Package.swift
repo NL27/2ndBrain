@@ -2,14 +2,14 @@
 import PackageDescription
 
 let package = Package(
-    name: "Snapture",
+    name: "SecondBrain",
     platforms: [
         .macOS(.v14)
     ],
     targets: [
         .executableTarget(
-            name: "Snapture",
-            path: "Sources/Snapture"
+            name: "SecondBrain",
+            path: "Sources/SecondBrain"
         )
     ]
 )

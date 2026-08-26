@@ -18,7 +18,7 @@ final class AudioRecorder: NSObject, AVAudioRecorderDelegate {
         let recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder.delegate = self
         guard recorder.record() else {
-            throw NSError(domain: "Snapture", code: -1,
+            throw NSError(domain: "SecondBrain", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "Microphone recorder failed to start"])
         }
         self.recorder = recorder

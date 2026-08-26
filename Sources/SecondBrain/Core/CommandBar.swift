@@ -425,7 +425,7 @@ private struct RecordingOptionsView: View {
         VStack(alignment: .leading, spacing: 8) {
             Toggle("Microphone", isOn: $store.microphone)
             Toggle("System audio", isOn: $store.systemAudio)
-            Toggle("Live transcription", isOn: $store.liveTranscription)
+            Toggle("Transcription", isOn: $store.liveTranscription)
 
             if store.liveTranscription {
                 Toggle("Show captions on screen", isOn: $store.showLiveCaptions)

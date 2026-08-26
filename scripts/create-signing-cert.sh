@@ -9,7 +9,7 @@
 # After that, all rebuilds sign cleanly and permissions persist.
 set -euo pipefail
 
-IDENTITY_NAME="${1:-Snapture Self-Signed}"
+IDENTITY_NAME="${1:-2nd Brain Self-Signed}"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

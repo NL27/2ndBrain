@@ -4,10 +4,10 @@ import os
 /// Lightweight logging wrapper around os.Logger with a file fallback so logs
 /// survive even when the app runs detached from a console.
 enum Log {
-    private static let logger = Logger(subsystem: "com.dao.snapture", category: "app")
+    private static let logger = Logger(subsystem: "com.dao.secondbrain", category: "app")
 
     private static let fileURL: URL = {
-        let url = AppInfo.supportDirectory.appendingPathComponent("snapture.log")
+        let url = AppInfo.supportDirectory.appendingPathComponent("secondbrain.log")
         return url
     }()
 
