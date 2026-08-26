@@ -14,6 +14,8 @@ final class Settings {
         static let showInputOverlay = "showInputOverlay"
         static let showMouseRing = "showMouseRing"
         static let showLiveCaptions = "showLiveCaptions"
+        static let ocrLanguageCorrection = "ocrLanguageCorrection"
+        static let dismissedDisplayHint = "dismissedDisplayHint"
         static let whisperModel = "whisperModel"
         static let whisperBackend = "whisperBackend"
         static let transcriptionLanguage = "transcriptionLanguage"
@@ -37,6 +39,7 @@ final class Settings {
             Keys.showInputOverlay: false,
             Keys.showMouseRing: false,
             Keys.showLiveCaptions: true,
+            Keys.ocrLanguageCorrection: false,
             Keys.whisperModel: "base.en",
             Keys.whisperBackend: TranscriptionBackend.whisperCpp.rawValue,
             Keys.transcriptionLanguage: "auto",
@@ -92,6 +95,19 @@ final class Settings {
     var showLiveCaptions: Bool {
         get { defaults.bool(forKey: Keys.showLiveCaptions) }
         set { defaults.set(newValue, forKey: Keys.showLiveCaptions) }
+    }
+
+    /// Lets Vision rewrite results towards dictionary words. Off keeps OCR
+    /// literal, which matters for code, IDs and punctuation.
+    var ocrLanguageCorrection: Bool {
+        get { defaults.bool(forKey: Keys.ocrLanguageCorrection) }
+        set { defaults.set(newValue, forKey: Keys.ocrLanguageCorrection) }
+    }
+
+    /// Display mode the non-Retina capture-quality hint was already shown for.
+    var dismissedDisplayHint: String? {
+        get { defaults.string(forKey: Keys.dismissedDisplayHint) }
+        set { defaults.set(newValue, forKey: Keys.dismissedDisplayHint) }
     }
 
     var whisperModel: String {

@@ -151,6 +151,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         addToggle(menu, "Capture System Audio", s.captureSystemAudio, #selector(toggleSystemAudio))
         addToggle(menu, "Capture Microphone", s.captureMicrophone, #selector(toggleMic))
         addToggle(menu, "Auto-Transcribe Recordings", s.autoTranscribe, #selector(toggleAutoTranscribe))
+        addToggle(menu, "Spell-Correct OCR (off keeps code exact)",
+                  s.ocrLanguageCorrection, #selector(toggleOCRCorrection))
         let autoPaste = addItem(menu, "Auto-Paste from History (needs Accessibility)", #selector(enableAutoPaste))
         autoPaste.state = Permissions.hasAccessibility() ? .on : .off
         menu.addItem(.separator())
@@ -262,6 +264,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func toggleSystemAudio() { Settings.shared.captureSystemAudio.toggle() }
     @objc private func toggleMic() { Settings.shared.captureMicrophone.toggle() }
     @objc private func toggleAutoTranscribe() { Settings.shared.autoTranscribe.toggle() }
+    @objc private func toggleOCRCorrection() { Settings.shared.ocrLanguageCorrection.toggle() }
     @objc private func toggleRefineLive() { Settings.shared.refineLiveWithTiron.toggle() }
 
     @objc private func toggleLaunchAtLogin() {
