@@ -46,6 +46,10 @@ Notes:
   • Your vault at ~/Desktop/2nd Brain is left alone — notes, screenshots, recordings
     and transcripts all stay, as does the Obsidian side of it. Delete it by hand if
     you really mean to.
+  • The overnight sandbox users `secondbrain-agent` (production) and
+    `secondbrain-dev` (development) are also left alone (deleting a
+    macOS user is irreversible from this script). Remove them in System Settings →
+    Users & Groups if you created it.
   • Turn off "Start at Login" before uninstalling, or remove the leftover entry in
     System Settings → General → Login Items & Extensions.
   • heed lived in the data folder, so it's gone with it (its own settings and notes

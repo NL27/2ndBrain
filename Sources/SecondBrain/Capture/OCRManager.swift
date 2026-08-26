@@ -136,8 +136,12 @@ final class OCRManager {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
-        VaultWriter.save(text: text)
+        _ = VaultWriter.save(text: text)
         let chars = text.count
-        HUD.shared.show("Copied \(chars) character\(chars == 1 ? "" : "s")", symbol: "text.viewfinder")
+        if SecretGuard.looksSecret(text) {
+            HUD.shared.show("Copied — not filed (looks like a secret)", symbol: "eye.slash")
+        } else {
+            HUD.shared.show("Copied \(chars) character\(chars == 1 ? "" : "s")", symbol: "text.viewfinder")
+        }
     }
 }

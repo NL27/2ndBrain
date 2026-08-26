@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "launch_agents": [
+    "com.dao.secondbrain.network-guard",
+    "com.dao.secondbrain.overnight-queue",
+    "com.dao.secondbrain.activity-watch",
+    "com.dao.secondbrain.snitch-keeper"
+  ],
+  "launch_daemons": [
+    "com.dao.secondbrain.overnight",
+    "com.dao.secondbrain.overnight-dev",
+    "com.dao.secondbrain.snitch-keeper"
+  ],
+  "label_prefixes_watch": [
+    "com.dao.secondbrain",
+    "com.snapture",
+    "secondbrain"
+  ]
+}

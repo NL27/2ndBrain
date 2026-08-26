@@ -9,8 +9,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Start clipboard history monitoring immediately.
         ClipboardManager.shared.start()
 
-        // Build the menu bar UI.
         menuBar = MenuBarController()
+        LittleSnitchKeeper.start()
 
         // Run a system profile and surface recommendations on first launch
         // or whenever the hardware/OS footprint changes.

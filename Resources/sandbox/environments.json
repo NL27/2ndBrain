@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "environments": {
+    "production": {
+      "user": "secondbrain-agent",
+      "full_name": "2nd Brain Agent",
+      "group": "secondbrain",
+      "drop": "/Users/Shared/2nd-Brain-Night",
+      "vault_queue": "Notes/Overnight/queue",
+      "sandbox_profile": "secondbrain-agent.sb",
+      "allowlist": "allowlist.json",
+      "allow_ips_file": "/usr/local/etc/secondbrain/allow.ips",
+      "network": "allowlist",
+      "mcp": false,
+      "timeout": 3600,
+      "hour": 2,
+      "minute": 0
+    },
+    "development": {
+      "user": "secondbrain-dev",
+      "full_name": "2nd Brain Dev",
+      "group": "secondbrain-dev",
+      "drop": "/Users/Shared/2nd-Brain-Dev",
+      "vault_queue": "Notes/Overnight/dev-queue",
+      "sandbox_profile": "secondbrain-dev.sb",
+      "allowlist": "allowlist-dev.json",
+      "allow_ips_file": "/usr/local/etc/secondbrain/allow-dev.ips",
+      "network": "loopback",
+      "mcp": false,
+      "timeout": 1800,
+      "hour": 2,
+      "minute": 30
+    }
+  }
+}

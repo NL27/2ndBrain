@@ -1,0 +1,57 @@
+;; Seatbelt profile for the overnight agent.
+;; Deny-by-default; only the agent home, the Shared drop folder, and system
+;; toolchains are readable. Other users' homes are not on this list.
+(version 1)
+(deny default)
+
+(allow sysctl-read)
+(allow mach-lookup)
+(allow mach-priv-host-port)
+(allow ipc-posix-shm)
+(allow process-fork)
+(allow signal)
+(allow system-socket)
+(allow file-ioctl)
+(allow file-read-metadata)
+
+(allow file-read* file-write*
+    (subpath "/Users/secondbrain-agent")
+    (subpath "/Users/Shared/2nd-Brain-Night")
+    (subpath "/private/tmp")
+    (subpath "/tmp")
+    (subpath "/private/var/tmp")
+    (subpath "/private/var/folders")
+    (subpath "/Library/Application Support/SecondBrain/sandbox")
+)
+
+(allow file-read*
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/opt/homebrew")
+    (subpath "/Library/Developer")
+    (subpath "/System")
+    (subpath "/Library/Frameworks")
+    (subpath "/usr/local")
+    (literal "/dev/null")
+    (literal "/dev/dtracehelper")
+    (literal "/dev/urandom")
+    (literal "/private/etc/hosts")
+    (literal "/etc/hosts")
+)
+
+(allow process-exec
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/opt/homebrew")
+    (subpath "/usr/local")
+    (subpath "/Users/secondbrain-agent")
+    (subpath "/Users/Shared/2nd-Brain-Night")
+)
+
+(allow network-outbound)
+(allow network-inbound)
+(allow network-bind)
+;; Network allow/deny for this user is enforced by pf, not seatbelt:
+;; seatbelt host lists cannot track rotating CDN IPs.

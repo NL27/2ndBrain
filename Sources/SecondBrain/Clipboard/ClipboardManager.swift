@@ -75,6 +75,10 @@ final class ClipboardManager {
             add(ClipboardItem(id: UUID(), kind: .file, text: nil, imageFilename: nil,
                               filePaths: urls.map { $0.path }, date: Date(), sourceApp: sourceApp, pinned: false))
         } else if let string = pb.string(forType: .string), !string.isEmpty {
+            if let hit = SecretGuard.firstHit(in: string) {
+                Log.info("Clipboard: skipped history for a \(hit.kind)")
+                return
+            }
             add(ClipboardItem(id: UUID(), kind: .text, text: string, imageFilename: nil,
                               filePaths: nil, date: Date(), sourceApp: sourceApp, pinned: false))
         }

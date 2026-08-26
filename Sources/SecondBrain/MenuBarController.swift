@@ -100,6 +100,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         addItem(menu, "System Info & Recommendations…", #selector(showRecommendations))
         addItem(menu, "Open Vault in Obsidian", #selector(openVaultInObsidian))
         addItem(menu, "Open Vault Folder", #selector(openVaultFolder))
+        addItem(menu, "Open Security Log", #selector(openSecurityLog))
+        addItem(menu, "Turn Little Snitch Filter On", #selector(enableLittleSnitchFilter))
         addItem(menu, "Open Data Folder", #selector(openSupportFolder))
         menu.addItem(.separator())
 
@@ -263,6 +265,25 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func openSupportFolder() { NSWorkspace.shared.open(AppInfo.supportDirectory) }
     @objc private func openVaultFolder() { NSWorkspace.shared.open(Settings.shared.vaultRoot) }
 
+    @objc private func openSecurityLog() {
+        let vault = Settings.shared.vaultRoot.appendingPathComponent("Notes/Security", isDirectory: true)
+        let shared = URL(fileURLWithPath: "/Users/Shared/2nd-Brain-Night/logs", isDirectory: true)
+        let devLogs = URL(fileURLWithPath: "/Users/Shared/2nd-Brain-Dev/logs", isDirectory: true)
+        if FileManager.default.fileExists(atPath: vault.path) {
+            NSWorkspace.shared.open(vault)
+        }
+        if FileManager.default.fileExists(atPath: shared.path) {
+            NSWorkspace.shared.open(shared)
+        }
+        if FileManager.default.fileExists(atPath: devLogs.path) {
+            NSWorkspace.shared.open(devLogs)
+        }
+    }
+
+    @objc private func enableLittleSnitchFilter() {
+        LittleSnitchKeeper.run()
+    }
+
     /// obsidian://open is the documented way to jump straight to a vault by path.
     @objc private func openVaultInObsidian() {
         let path = Settings.shared.vaultRoot.path
@@ -371,7 +392,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func askAIAboutClipboard() {
+        let pasteboard = NSPasteboard.general.string(forType: .string) ?? ""
+        if SecretGuard.looksSecret(pasteboard) {
+            showAlert(title: "Not sent",
+                      message: "The clipboard looks like a credential. It was not sent to any model.")
+            return
+        }
         let latestText = ClipboardManager.shared.items.first(where: { $0.kind == .text })?.text ?? ""
+        if SecretGuard.looksSecret(latestText) {
+            showAlert(title: "Not sent",
+                      message: "Clipboard history looks like a credential. It was not sent to any model.")
+            return
+        }
         guard let question = prompt(title: "Ask AI",
                                     message: "Your prompt. The most recent clipboard text is attached as context.",
                                     defaultValue: "Summarize this:") else { return }

@@ -37,6 +37,32 @@ chmod +x "$APP/Contents/Resources/sync-mcp-registry.py"
 cp "$ROOT/scripts/obsidian-setup.sh" "$APP/Contents/Resources/obsidian-setup.sh"
 cp "$ROOT/scripts/obsidian_setup.py" "$APP/Contents/Resources/obsidian_setup.py"
 chmod +x "$APP/Contents/Resources/obsidian-setup.sh" "$APP/Contents/Resources/obsidian_setup.py"
+mkdir -p "$APP/Contents/Resources/sandbox" "$APP/Contents/Resources/skills"
+cp "$ROOT/scripts/defend-setup.sh" "$APP/Contents/Resources/defend-setup.sh"
+cp "$ROOT/scripts/defend-privileged.sh" "$APP/Contents/Resources/defend-privileged.sh"
+cp "$ROOT/scripts/network-guard.py" "$APP/Contents/Resources/network-guard.py"
+cp "$ROOT/scripts/overnight-run.sh" "$APP/Contents/Resources/overnight-run.sh"
+cp "$ROOT/scripts/scan-secrets.py" "$APP/Contents/Resources/scan-secrets.py"
+cp "$ROOT/scripts/host-integrity.py" "$APP/Contents/Resources/host-integrity.py"
+cp "$ROOT/scripts/activity-watch.py" "$APP/Contents/Resources/activity-watch.py"
+cp "$ROOT/scripts/little-snitch-keeper.sh" "$APP/Contents/Resources/little-snitch-keeper.sh"
+cp "$ROOT/scripts/overnight-queue-sync.sh" "$APP/Contents/Resources/overnight-queue-sync.sh"
+chmod +x "$APP/Contents/Resources/defend-setup.sh" \
+         "$APP/Contents/Resources/defend-privileged.sh" \
+         "$APP/Contents/Resources/network-guard.py" \
+         "$APP/Contents/Resources/overnight-run.sh" \
+         "$APP/Contents/Resources/scan-secrets.py" \
+         "$APP/Contents/Resources/host-integrity.py" \
+         "$APP/Contents/Resources/activity-watch.py" \
+         "$APP/Contents/Resources/little-snitch-keeper.sh" \
+         "$APP/Contents/Resources/overnight-queue-sync.sh"
+cp "$ROOT/Resources/sandbox/"* "$APP/Contents/Resources/sandbox/"
+cp -R "$ROOT/skills/mac-defend" "$ROOT/skills/mac-network-guard" "$ROOT/skills/overnight-sandbox" \
+     "$ROOT/skills/secrets-hygiene" "$ROOT/skills/data-boundary" \
+     "$ROOT/skills/prompt-injection-guard" "$ROOT/skills/mcp-trust" \
+     "$ROOT/skills/persistence-hygiene" "$ROOT/skills/vault-exposure" \
+     "$ROOT/skills/agent-hard-limits" \
+     "$APP/Contents/Resources/skills/"
 
 if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
   cp "$ROOT/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"

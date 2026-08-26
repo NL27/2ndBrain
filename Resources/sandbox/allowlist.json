@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "agent_user": "secondbrain-agent",
+  "trusted_hosts": [
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "n8n.nl.sec-desk.com",
+    "n8n3.flowdaptor.com",
+    "openrouter.ai",
+    "api.openrouter.ai",
+    "github.com",
+    "api.github.com",
+    "objects.githubusercontent.com",
+    "codeload.github.com",
+    "huggingface.co",
+    "cdn-lfs.huggingface.co",
+    "pypi.org",
+    "files.pythonhosted.org",
+    "registry.npmjs.org",
+    "registry.npmmirror.com"
+  ],
+  "trusted_cidrs": [
+    "127.0.0.0/8",
+    "::1/128",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+    "169.254.0.0/16"
+  ],
+  "notes": "Loopback and RFC1918 stay open so oMLX, Ollama, heed and LAN printers keep working. The pf default-deny applies only to user secondbrain-agent, not to the logged-in person."
+}

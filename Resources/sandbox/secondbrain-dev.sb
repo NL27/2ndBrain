@@ -1,0 +1,57 @@
+;; Stricter seatbelt for the development overnight worker.
+;; Loopback AI (oMLX/Ollama) may still work; pf also default-denies non-loopback.
+;; Cannot read the production drop folder, the interactive home, or the vault.
+(version 1)
+(deny default)
+
+(allow sysctl-read)
+(allow mach-lookup)
+(allow mach-priv-host-port)
+(allow ipc-posix-shm)
+(allow process-fork)
+(allow signal)
+(allow system-socket)
+(allow file-ioctl)
+(allow file-read-metadata)
+
+(allow file-read* file-write*
+    (subpath "/Users/secondbrain-dev")
+    (subpath "/Users/Shared/2nd-Brain-Dev")
+    (subpath "/private/tmp")
+    (subpath "/tmp")
+    (subpath "/private/var/tmp")
+    (subpath "/private/var/folders")
+    (subpath "/Library/Application Support/SecondBrain/sandbox")
+)
+
+(allow file-read*
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/opt/homebrew")
+    (subpath "/Library/Developer")
+    (subpath "/System")
+    (subpath "/Library/Frameworks")
+    (subpath "/usr/local")
+    (literal "/dev/null")
+    (literal "/dev/dtracehelper")
+    (literal "/dev/urandom")
+    (literal "/private/etc/hosts")
+    (literal "/etc/hosts")
+)
+
+(allow process-exec
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/sbin")
+    (subpath "/opt/homebrew")
+    (subpath "/usr/local")
+    (subpath "/Users/secondbrain-dev")
+    (subpath "/Users/Shared/2nd-Brain-Dev")
+)
+
+;; pf still blocks non-loopback for this user. Seatbelt allows sockets so
+;; 127.0.0.1 oMLX can answer; do not open the production drop path here.
+(allow network-outbound)
+(allow network-inbound)
+(allow network-bind)

@@ -96,6 +96,10 @@ enum VaultWriter {
     @discardableResult
     static func save(text: String, kind: Kind = .ocr) -> URL? {
         guard isEnabled, !text.isEmpty else { return nil }
+        if let hit = SecretGuard.firstHit(in: text) {
+            Log.info("Vault: skipped filing \(kind.frontmatterType) — looks like a \(hit.kind)")
+            return nil
+        }
 
         let stamp = Date()
         let base = filename(for: kind, at: stamp)

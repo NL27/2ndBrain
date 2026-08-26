@@ -58,7 +58,8 @@ ensure_desktop_brain_dir() {
     "$DESKTOP_THINKING_DIR/frameworks" \
     "$DESKTOP_THINKING_DIR/reasoning" \
     "$DESKTOP_THINKING_DIR/evaluation" \
-    "$DESKTOP_BRAIN_DIR/Agent Skills/mcp"
+    "$DESKTOP_BRAIN_DIR/Agent Skills/mcp" \
+    "$DESKTOP_BRAIN_DIR/Agent Skills/cybersecurity"
   # Legacy: reasoning/evaluation used to be sibling folders — fold into thinking/.
   rm -rf "$DESKTOP_SKILLS_DIR/reasoning" "$DESKTOP_SKILLS_DIR/evaluation"
   if [[ -d "$LEGACY_DESKTOP_SKILLS" ]]; then
@@ -1526,7 +1527,7 @@ setup_desktop_skills_library() {
   ensure_desktop_brain_dir
   local category name skill_path link_path
   mkdir -p "$DESKTOP_SKILLS_DIR/nextjs" "$DESKTOP_SKILLS_DIR/nestjs" "$DESKTOP_SKILLS_DIR/n8n" \
-    "$DESKTOP_SKILLS_DIR/openrouter" \
+    "$DESKTOP_SKILLS_DIR/openrouter" "$DESKTOP_SKILLS_DIR/cybersecurity" \
     "$DESKTOP_THINKING_DIR/frameworks" "$DESKTOP_THINKING_DIR/reasoning" "$DESKTOP_THINKING_DIR/evaluation"
   rm -rf "$DESKTOP_SKILLS_DIR/reasoning" "$DESKTOP_SKILLS_DIR/evaluation"
   find "$DESKTOP_THINKING_DIR" -maxdepth 1 -type l -delete 2>/dev/null || true
@@ -1602,6 +1603,7 @@ Open **`~/Desktop/2nd Brain`** in VS Code — this folder lives inside it.
 | `openrouter/` | Model skills + profiles; **`free-tool-agent-models.md`**; default Free, fallback Auto |
 | `thinking/` | **Start with `thinking-model-router`** — then `frameworks/`, `reasoning/`, `evaluation/` |
 | `mcp/` | MCP server registry — connect multiple n8n instances and other MCP servers |
+| `cybersecurity/` | host: `mac-defend`, `mac-network-guard`, `overnight-sandbox`, `persistence-hygiene`, `vault-exposure`; data: `secrets-hygiene`, `data-boundary`, `prompt-injection-guard`, `mcp-trust`, `agent-hard-limits`; plus `security-review`, `skill-auditor`, `n8n-credentials-and-security-official` |
 
 **n8n automations:** enable instance-level MCP in each n8n (Settings → Instance-level MCP),
 add the instance in `mcp/registry.json`, put bearer tokens in `mcp/local.env`, then run
@@ -2507,8 +2509,25 @@ step_obsidian() {
   return 1
 }
 
+# --- Defence: sandbox user, network allowlist, overnight isolation ----------
+step_defend() {
+  local helper="$SCRIPT_DIR/defend-setup.sh"
+  if [[ ! -f "$helper" ]]; then
+    emit defend failed "defend-setup.sh is missing next to bootstrap.sh"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  local args=()
+  installing || args+=(--check)
+  if bash "$helper" "${args[@]}"; then
+    return 0
+  fi
+  # manual (admin password later) is not a hard fail
+  return 0
+}
+
 # --- run --------------------------------------------------------------------
-for step in requirements brew node bun python ffmpeg whisper tiron heed omlx omlx_interpreter vscode agent_skills screenpipe tts brain obsidian ollama; do
+for step in requirements brew node bun python ffmpeg whisper tiron heed omlx omlx_interpreter vscode agent_skills screenpipe tts brain obsidian defend ollama; do
   wanted "$step" || continue
   "step_$step"
 done

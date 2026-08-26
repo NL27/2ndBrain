@@ -228,7 +228,9 @@ extension SetupManager.Step {
     static let screenpipeID = "screenpipe"
 
     /// Steps that never block “ready” — nice-to-have extras.
-    static let optionalIDs: Set<String> = [ollamaID, screenpipeID]
+    /// Steps that never block “ready” — nice-to-have extras.
+    /// `defend` asks for an admin password; declining it still leaves skills + logs.
+    static let optionalIDs: Set<String> = [ollamaID, screenpipeID, "defend"]
 
     /// Order matches the bootstrap script, so progress reads top to bottom.
     static let everything: [SetupManager.Step] = [
@@ -266,6 +268,8 @@ extension SetupManager.Step {
               purpose: "Markdown second brain with graph search MCP"),
         .init(id: "obsidian", title: "Obsidian + vault plugins",
               purpose: "Graph view over the vault: calendar, tasks, search, local AI"),
+        .init(id: "defend", title: "Sandbox user + network guard",
+              purpose: "Prod + dev overnight users, activity watch, Little Snitch 3h filter keeper"),
         .init(id: ollamaID, title: "Ollama (optional)",
               purpose: "Extra local LLM runtime alongside oMLX")
     ]
