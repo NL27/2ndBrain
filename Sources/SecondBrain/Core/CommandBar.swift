@@ -15,6 +15,33 @@ struct CommandBarAction: Identifiable {
 @MainActor
 final class CommandBarStore: ObservableObject {
     @Published var actions: [CommandBarAction] = []
+    /// Shows the recording options drawer beneath the buttons.
+    @Published var showingRecordingOptions = false
+
+    // Mirrors of the persisted settings so the toggles stay live.
+    @Published var followMouse = Settings.shared.followMouseWhileRecording {
+        didSet { Settings.shared.followMouseWhileRecording = followMouse }
+    }
+    @Published var captureInput = Settings.shared.showInputOverlay {
+        didSet { Settings.shared.showInputOverlay = captureInput }
+    }
+    @Published var systemAudio = Settings.shared.captureSystemAudio {
+        didSet { Settings.shared.captureSystemAudio = systemAudio }
+    }
+    @Published var microphone = Settings.shared.captureMicrophone {
+        didSet { Settings.shared.captureMicrophone = microphone }
+    }
+
+    /// Re-reads the settings, in case they were changed from the menu.
+    func syncFromSettings() {
+        let s = Settings.shared
+        if followMouse != s.followMouseWhileRecording { followMouse = s.followMouseWhileRecording }
+        if captureInput != s.showInputOverlay { captureInput = s.showInputOverlay }
+        if systemAudio != s.captureSystemAudio { systemAudio = s.captureSystemAudio }
+        if microphone != s.captureMicrophone { microphone = s.captureMicrophone }
+    }
+
+    var startRecording: () -> Void = {}
 }
 
 /// A translucent, floating palette of the most-used actions. Opened from the
@@ -30,6 +57,8 @@ final class CommandBar: NSObject, NSWindowDelegate {
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
     private var stateObservers: [NSObjectProtocol] = []
+    /// Where the user last dragged the bar, so it reopens where they left it.
+    private var userOrigin: NSPoint?
 
     // MARK: - Presentation
 
@@ -38,11 +67,14 @@ final class CommandBar: NSObject, NSWindowDelegate {
     }
 
     func show() {
+        store.syncFromSettings()
+        store.showingRecordingOptions = false
         rebuildActions()
         let panel = panel ?? makePanel()
         self.panel = panel
 
-        panel.setFrame(frameForActiveScreen(size: panel.frame.size), display: false)
+        panel.layoutIfNeeded()
+        positionPanel(panel)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
         panel.makeKey()
@@ -59,7 +91,10 @@ final class CommandBar: NSObject, NSWindowDelegate {
 
     func hide() {
         stopMonitoring()
+        store.showingRecordingOptions = false
         guard let panel, panel.isVisible else { return }
+        // Remember where it was dragged to before it goes away.
+        userOrigin = panel.frame.origin
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.1
             panel.animator().alphaValue = 0
@@ -95,13 +130,14 @@ final class CommandBar: NSObject, NSWindowDelegate {
             CommandBarAction(id: "screen", title: screenRecording ? "Stop Screen" : "Record Screen",
                              symbol: screenRecording ? "stop.circle.fill" : "record.circle",
                              isRunning: screenRecording) { [weak self] in
-                self?.dismissThen {
-                    if RecordingCoordinator.shared.isRecording {
-                        RecordingCoordinator.shared.stopIfRecording()
-                    } else {
-                        RecordingCoordinator.shared.toggleScreenRecording(
-                            selection: .display(RecordingCoordinator.displayUnderCursor()))
-                    }
+                guard let self else { return }
+                if RecordingCoordinator.shared.isRecording {
+                    self.dismissThen { RecordingCoordinator.shared.stopIfRecording() }
+                } else {
+                    // Reveal the options drawer instead of starting immediately.
+                    self.store.syncFromSettings()
+                    self.store.showingRecordingOptions.toggle()
+                    self.relayoutAfterDrawerChange()
                 }
             },
             CommandBarAction(id: "audio", title: audioRecording ? "Stop Audio" : "Record Audio",
@@ -118,6 +154,28 @@ final class CommandBar: NSObject, NSWindowDelegate {
                 self?.dismissThen { ClipboardHistoryController.shared.toggle(relativeTo: nil) }
             }
         ]
+
+        store.startRecording = { [weak self] in
+            guard let self, let panel = self.panel else { return }
+            // Record the screen this bar is sitting on, decided before it hides.
+            let displayID = RecordingCoordinator.display(containing: panel)
+            self.dismissThen {
+                RecordingCoordinator.shared.toggleScreenRecording(selection: .display(displayID))
+            }
+        }
+    }
+
+    /// The drawer changes the panel's height, so resize around the top edge —
+    /// otherwise the bar appears to jump when it expands.
+    private func relayoutAfterDrawerChange() {
+        guard let panel else { return }
+        let topLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        panel.layoutIfNeeded()
+        let size = panel.contentView?.fittingSize ?? panel.frame.size
+        var frame = NSRect(x: topLeft.x, y: topLeft.y - size.height,
+                           width: size.width, height: size.height)
+        frame = clamp(frame, to: screenForPanel(panel))
+        panel.setFrame(frame, display: true, animate: false)
     }
 
     // MARK: - Window
@@ -139,6 +197,9 @@ final class CommandBar: NSObject, NSWindowDelegate {
         panel.isReleasedWhenClosed = false
         panel.delegate = self
         panel.onEscape = { [weak self] in self?.hide() }
+        // Draggable from any empty area of the bar, plus the explicit grip.
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = true
         panel.contentView = hosting
 
         observeFeatureState()
@@ -160,16 +221,34 @@ final class CommandBar: NSObject, NSWindowDelegate {
         }
     }
 
-    private func frameForActiveScreen(size: NSSize) -> NSRect {
-        let screen = activeScreen()
+    /// Reopens where the user last dragged it, otherwise centres it in the lower
+    /// third of the screen holding the pointer.
+    private func positionPanel(_ panel: CommandBarPanel) {
+        let size = panel.contentView?.fittingSize ?? panel.frame.size
+        var frame: NSRect
+        if let origin = userOrigin {
+            frame = NSRect(origin: origin, size: size)
+        } else {
+            let visible = activeScreen().visibleFrame
+            frame = NSRect(x: (visible.midX - size.width / 2).rounded(),
+                           y: (visible.minY + visible.height * 0.26).rounded(),
+                           width: size.width, height: size.height)
+        }
+        // A remembered position can end up off-screen if displays changed.
+        let host = NSScreen.screens.first { $0.frame.intersects(frame) } ?? activeScreen()
+        panel.setFrame(clamp(frame, to: host), display: false)
+    }
+
+    private func clamp(_ frame: NSRect, to screen: NSScreen) -> NSRect {
         let visible = screen.visibleFrame
-        let width = max(size.width, 1)
-        let height = max(size.height, 1)
-        // Lower third: close to the pointer's usual resting place without
-        // covering the middle of whatever the user is looking at.
-        let x = visible.midX - width / 2
-        let y = visible.minY + visible.height * 0.26
-        return NSRect(x: x.rounded(), y: y.rounded(), width: width, height: height)
+        var result = frame
+        result.origin.x = min(max(frame.minX, visible.minX), max(visible.minX, visible.maxX - frame.width))
+        result.origin.y = min(max(frame.minY, visible.minY), max(visible.minY, visible.maxY - frame.height))
+        return result
+    }
+
+    private func screenForPanel(_ panel: NSWindow) -> NSScreen {
+        panel.screen ?? activeScreen()
     }
 
     private func activeScreen() -> NSScreen {
@@ -215,6 +294,11 @@ final class CommandBar: NSObject, NSWindowDelegate {
     func windowDidResignKey(_ notification: Notification) {
         hide()
     }
+
+    func windowDidMove(_ notification: Notification) {
+        guard let panel, panel.isVisible else { return }
+        userOrigin = panel.frame.origin
+    }
 }
 
 /// Borderless panel that can still take key events, so Escape closes the bar
@@ -231,12 +315,24 @@ struct CommandBarView: View {
     @ObservedObject var store: CommandBarStore
 
     var body: some View {
-        HStack(spacing: 6) {
-            ForEach(store.actions) { action in
-                CommandBarButton(action: action)
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                WindowDragHandle()
+                    .frame(width: 16, height: 62)
+                ForEach(store.actions) { action in
+                    CommandBarButton(action: action)
+                }
+            }
+            .padding(10)
+
+            if store.showingRecordingOptions {
+                Divider().padding(.horizontal, 10)
+                RecordingOptionsView(store: store)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 10)
+                    .padding(.bottom, 12)
             }
         }
-        .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(.ultraThinMaterial)
@@ -247,6 +343,78 @@ struct CommandBarView: View {
         )
         .padding(6)
         .fixedSize()
+    }
+}
+
+/// The options drawer that opens beneath the bar when Record Screen is clicked.
+private struct RecordingOptionsView: View {
+    @ObservedObject var store: CommandBarStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Screen Recording")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Toggle("Follow the mouse (zoomed pan)", isOn: $store.followMouse)
+            Toggle("Show mouse clicks & keystrokes", isOn: $store.captureInput)
+            Toggle("Record system audio", isOn: $store.systemAudio)
+            Toggle("Record microphone", isOn: $store.microphone)
+
+            if store.captureInput && !Permissions.hasAccessibility() {
+                Text("Keystrokes need Accessibility — clicks only until it's granted.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            Text("Records the screen this bar is on.")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+
+            Button(action: store.startRecording) {
+                Label("Start Recording", systemImage: "record.circle")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .padding(.top, 2)
+        }
+        .toggleStyle(.checkbox)
+        .font(.system(size: 12))
+        .frame(width: 300, alignment: .leading)
+    }
+}
+
+/// Transparent strip that drags the whole window, so the bar can be repositioned
+/// without relying on hitting empty background between buttons.
+private struct WindowDragHandle: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { DragView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class DragView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            window?.performDrag(with: event)
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .openHand)
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            NSColor.secondaryLabelColor.withAlphaComponent(0.5).setFill()
+            let dot: CGFloat = 3
+            let spacing: CGFloat = 6
+            let rows = 4
+            let totalHeight = CGFloat(rows) * dot + CGFloat(rows - 1) * (spacing - dot)
+            var y = bounds.midY - totalHeight / 2
+            for _ in 0..<rows {
+                for column in 0..<2 {
+                    let rect = NSRect(x: bounds.midX - spacing / 2 + CGFloat(column) * spacing,
+                                      y: y, width: dot, height: dot)
+                    NSBezierPath(ovalIn: rect).fill()
+                }
+                y += spacing
+            }
+        }
     }
 }
 

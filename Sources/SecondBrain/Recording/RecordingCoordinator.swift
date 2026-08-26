@@ -56,6 +56,17 @@ final class RecordingCoordinator {
         if isRecording { stop() } else { startScreen(selection: selection) }
     }
 
+    /// The display a window sits on, used so the quick-actions bar records the
+    /// screen it is currently on rather than wherever the pointer happens to be.
+    @MainActor
+    static func display(containing window: NSWindow) -> CGDirectDisplayID {
+        let centre = CGPoint(x: window.frame.midX, y: window.frame.midY)
+        let screen = window.screen
+            ?? NSScreen.screens.first { NSMouseInRect(centre, $0.frame, false) }
+            ?? NSScreen.main
+        return screen?.displayID ?? CGMainDisplayID()
+    }
+
     func toggleAudioRecording() {
         if isRecording { stop() } else { startAudioOnly() }
     }
@@ -81,14 +92,21 @@ final class RecordingCoordinator {
                 // Only the first stream captures system audio to avoid recording
                 // it multiple times when recording several displays at once.
                 var captureAudio = Settings.shared.captureSystemAudio
+                // Panning the crop only makes sense for a single display.
+                let followMouse = Settings.shared.followMouseWhileRecording && displays.count == 1
                 for display in displays {
                     let recorder = ScreenRecorder()
-                    try await recorder.start(display: display, captureSystemAudio: captureAudio)
+                    try await recorder.start(display: display,
+                                             captureSystemAudio: captureAudio,
+                                             followMouse: followMouse)
                     screenRecorders.append(recorder)
                     captureAudio = false
                 }
                 startMicIfEnabled()
-                await MainActor.run { self.setRecording(true) }
+                await MainActor.run {
+                    self.startInputOverlayIfEnabled(displayIDs: displays.map(\.displayID))
+                    self.setRecording(true)
+                }
                 Log.info("Recording \(displays.count) display(s)")
             } catch {
                 Log.error("Failed to start screen recording: \(error)")
@@ -121,6 +139,16 @@ final class RecordingCoordinator {
         }
     }
 
+    /// Shows click/keystroke visuals on the recorded screen so they're captured
+    /// in the video. Only meaningful for a single display.
+    @MainActor
+    private func startInputOverlayIfEnabled(displayIDs: [CGDirectDisplayID]) {
+        guard Settings.shared.showInputOverlay,
+              let id = displayIDs.first, displayIDs.count == 1,
+              let screen = NSScreen.screens.first(where: { $0.displayID == id }) else { return }
+        InputOverlay.shared.start(on: screen)
+    }
+
     private func startMicIfEnabled() {
         guard Settings.shared.captureMicrophone else { return }
         ensureMic { granted in
@@ -141,6 +169,7 @@ final class RecordingCoordinator {
 
     func stop() {
         Task {
+            await MainActor.run { InputOverlay.shared.stop() }
             var audioForTranscription: URL?
             let micURL = audioRecorder.stop()
             if mode == .screen {
@@ -153,10 +182,52 @@ final class RecordingCoordinator {
             }
             await MainActor.run { self.setRecording(false) }
 
-            if Settings.shared.autoTranscribe, let audioURL = audioForTranscription {
+            guard Settings.shared.autoTranscribe, let audioURL = audioForTranscription else { return }
+            // Heed can't share the microphone with 2ⁿᵈ Brain's own recorder, so
+            // live multi-speaker captions aren't available here. After the fact we
+            // ask, and run Tiron when there was more than one voice.
+            let useTiron = await MainActor.run { Self.askIfMultiSpeaker() }
+                && TranscriptionManager.shared.isInstalled(.tiron)
+            if useTiron {
+                do {
+                    let text = try await TranscriptionManager.shared.transcript(for: audioURL, using: .tiron)
+                    let outURL = audioURL.deletingPathExtension().appendingPathExtension("txt")
+                    try text.write(to: outURL, atomically: true, encoding: .utf8)
+                    Log.info("Tiron transcript written -> \(outURL.lastPathComponent)")
+                    await MainActor.run {
+                        NotificationCenter.default.post(name: .init("SecondBrainStatus"),
+                                                        object: "Transcript ready: \(outURL.lastPathComponent)")
+                        NSWorkspace.shared.activateFileViewerSelecting([outURL])
+                        HUD.shared.show("Speakers labelled", symbol: "person.2.wave.2")
+                    }
+                } catch {
+                    Log.error("Tiron after recording failed: \(error.localizedDescription)")
+                    TranscriptionManager.shared.transcribe(url: audioURL)
+                }
+            } else {
                 TranscriptionManager.shared.transcribe(url: audioURL)
             }
         }
+    }
+
+    /// Heed already labels speakers during live sessions; for 2ⁿᵈ Brain's own
+    /// recordings we have to ask, because we can't tell from a mixed audio track.
+    @MainActor
+    private static func askIfMultiSpeaker() -> Bool {
+        guard TranscriptionManager.shared.isInstalled(.tiron) else { return false }
+        let alert = NSAlert()
+        alert.messageText = "Did more than one person speak?"
+        alert.informativeText = """
+        2ⁿᵈ Brain can re-transcribe this recording with Tiron, which labels who \
+        said what — including people talking over each other.
+
+        For live captions with speakers while the meeting is still going, use \
+        Live Transcription (⌃⌥T) instead of screen/audio recording.
+        """
+        alert.addButton(withTitle: "Yes — Label Speakers")
+        alert.addButton(withTitle: "No — Plain Transcript")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn
     }
 
     @discardableResult

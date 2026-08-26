@@ -10,9 +10,15 @@ final class Settings {
         static let captureSystemAudio = "captureSystemAudio"
         static let captureMicrophone = "captureMicrophone"
         static let autoTranscribe = "autoTranscribe"
-        static let enableDiarization = "enableDiarization"
+        static let followMouseWhileRecording = "followMouseWhileRecording"
+        static let showInputOverlay = "showInputOverlay"
         static let whisperModel = "whisperModel"
         static let whisperBackend = "whisperBackend"
+        static let transcriptionLanguage = "transcriptionLanguage"
+        static let tironMaxSpeakers = "tironMaxSpeakers"
+        static let heedBaseURL = "heedBaseURL"
+        static let refineLiveWithTiron = "refineLiveWithTiron"
+        static let setupCompletedVersion = "setupCompletedVersion"
         static let aiProvider = "aiProvider"
         static let aiBaseURL = "aiBaseURL"
         static let aiModel = "aiModel"
@@ -25,12 +31,17 @@ final class Settings {
             Keys.captureSystemAudio: true,
             Keys.captureMicrophone: true,
             Keys.autoTranscribe: true,
-            Keys.enableDiarization: false,
+            Keys.followMouseWhileRecording: false,
+            Keys.showInputOverlay: false,
             Keys.whisperModel: "base.en",
             Keys.whisperBackend: TranscriptionBackend.whisperCpp.rawValue,
+            Keys.transcriptionLanguage: "auto",
+            Keys.tironMaxSpeakers: 0,
+            Keys.heedBaseURL: "http://localhost:5170",
+            Keys.refineLiveWithTiron: true,
             Keys.aiProvider: AIProvider.localOpenAICompatible.rawValue,
-            Keys.aiBaseURL: "http://localhost:11434/v1",
-            Keys.aiModel: "llama3.1"
+            Keys.aiBaseURL: "http://localhost:8000/v1",
+            Keys.aiModel: "llama3.2",
         ])
     }
 
@@ -54,9 +65,16 @@ final class Settings {
         set { defaults.set(newValue, forKey: Keys.autoTranscribe) }
     }
 
-    var enableDiarization: Bool {
-        get { defaults.bool(forKey: Keys.enableDiarization) }
-        set { defaults.set(newValue, forKey: Keys.enableDiarization) }
+    /// Records a zoomed crop that pans to keep the pointer centred.
+    var followMouseWhileRecording: Bool {
+        get { defaults.bool(forKey: Keys.followMouseWhileRecording) }
+        set { defaults.set(newValue, forKey: Keys.followMouseWhileRecording) }
+    }
+
+    /// Draws click ripples and pressed keys on screen so they land in the video.
+    var showInputOverlay: Bool {
+        get { defaults.bool(forKey: Keys.showInputOverlay) }
+        set { defaults.set(newValue, forKey: Keys.showInputOverlay) }
     }
 
     var whisperModel: String {
@@ -69,18 +87,49 @@ final class Settings {
         set { defaults.set(newValue.rawValue, forKey: Keys.whisperBackend) }
     }
 
+    /// Language passed to the transcription engines; "auto" lets them detect it.
+    var transcriptionLanguage: String {
+        get { defaults.string(forKey: Keys.transcriptionLanguage) ?? "auto" }
+        set { defaults.set(newValue, forKey: Keys.transcriptionLanguage) }
+    }
+
+    /// Upper bound on speakers Tiron may attribute; 0 lets it decide (max 8).
+    var tironMaxSpeakers: Int {
+        get { defaults.integer(forKey: Keys.tironMaxSpeakers) }
+        set { defaults.set(newValue, forKey: Keys.tironMaxSpeakers) }
+    }
+
+    /// Where the local heed server is listening for live transcription.
+    var heedBaseURL: String {
+        get { defaults.string(forKey: Keys.heedBaseURL) ?? "http://localhost:5170" }
+        set { defaults.set(newValue, forKey: Keys.heedBaseURL) }
+    }
+
+    /// After a live session with more than one voice, re-run the recording
+    /// through Tiron for its stronger speaker attribution.
+    var refineLiveWithTiron: Bool {
+        get { defaults.bool(forKey: Keys.refineLiveWithTiron) }
+        set { defaults.set(newValue, forKey: Keys.refineLiveWithTiron) }
+    }
+
+    /// App version that finished first-run setup; nil means it never ran.
+    var setupCompletedVersion: String? {
+        get { defaults.string(forKey: Keys.setupCompletedVersion) }
+        set { defaults.set(newValue, forKey: Keys.setupCompletedVersion) }
+    }
+
     var aiProvider: AIProvider {
         get { AIProvider(rawValue: defaults.string(forKey: Keys.aiProvider) ?? "") ?? .localOpenAICompatible }
         set { defaults.set(newValue.rawValue, forKey: Keys.aiProvider) }
     }
 
     var aiBaseURL: String {
-        get { defaults.string(forKey: Keys.aiBaseURL) ?? "http://localhost:11434/v1" }
+        get { defaults.string(forKey: Keys.aiBaseURL) ?? "http://localhost:8000/v1" }
         set { defaults.set(newValue, forKey: Keys.aiBaseURL) }
     }
 
     var aiModel: String {
-        get { defaults.string(forKey: Keys.aiModel) ?? "llama3.1" }
+        get { defaults.string(forKey: Keys.aiModel) ?? "llama3.2" }
         set { defaults.set(newValue, forKey: Keys.aiModel) }
     }
 
