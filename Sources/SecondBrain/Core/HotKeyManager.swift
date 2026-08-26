@@ -51,8 +51,12 @@ final class HotKeyManager {
         InstallEventHandler(GetApplicationEventTarget(), callback, 1, &spec, selfPtr, nil)
     }
 
-    /// Registers the default Snapture hotkeys.
+    /// Registers the default 2ⁿᵈ Brain hotkeys.
     func registerDefaults() {
+        // ⌃⌥Space — floating quick-actions bar
+        register(KeyCombo(keyCode: UInt32(kVK_Space), modifiers: UInt32(controlKey | optionKey))) {
+            Task { @MainActor in CommandBar.shared.toggle() }
+        }
         // ⌃⌥4 — capture area screenshot
         register(KeyCombo(keyCode: UInt32(kVK_ANSI_4), modifiers: UInt32(controlKey | optionKey))) {
             ScreenshotManager.shared.captureRegionToClipboard()
@@ -69,6 +73,10 @@ final class HotKeyManager {
         register(KeyCombo(keyCode: UInt32(kVK_ANSI_6), modifiers: UInt32(controlKey | optionKey))) {
             RecordingCoordinator.shared.toggleScreenRecording(
                 selection: .display(RecordingCoordinator.displayUnderCursor()))
+        }
+        // ⌃⌥T — toggle live transcription
+        register(KeyCombo(keyCode: UInt32(kVK_ANSI_T), modifiers: UInt32(controlKey | optionKey))) {
+            Task { @MainActor in LiveTranscriptionController.shared.toggle() }
         }
     }
 }

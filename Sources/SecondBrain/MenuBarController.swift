@@ -2,6 +2,7 @@ import AppKit
 
 /// Builds and manages the menu bar status item and its menu — the only UI
 /// surface of the app aside from transient panels and overlays.
+@MainActor
 final class MenuBarController: NSObject, NSMenuDelegate {
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private var statusMessage: String = ""
@@ -12,29 +13,34 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         statusItem.menu = buildMenu()
         HotKeyManager.shared.registerDefaults()
 
-        NotificationCenter.default.addObserver(self, selector: #selector(recordingChanged),
-                                               name: RecordingCoordinator.stateChanged, object: nil)
-        NotificationCenter.default.addObserver(forName: .init("SnaptureStatus"), object: nil, queue: .main) { [weak self] note in
-            self?.statusMessage = (note.object as? String) ?? ""
+        for name in [RecordingCoordinator.stateChanged, LiveTranscriptionController.stateChanged] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refreshStatusIcon() }
+            }
+        }
+        NotificationCenter.default.addObserver(forName: .init("SecondBrainStatus"), object: nil, queue: .main) { [weak self] note in
+            MainActor.assumeIsolated { self?.statusMessage = (note.object as? String) ?? "" }
         }
     }
 
     private func configureButton() {
         if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "camera.viewfinder", accessibilityDescription: "Snapture")
+            button.image = NSImage(systemSymbolName: "brain.head.profile", accessibilityDescription: AppInfo.name)
             button.image?.isTemplate = true
         }
     }
 
-    @objc private func recordingChanged() {
-        DispatchQueue.main.async {
-            if let button = self.statusItem.button {
-                let recording = RecordingCoordinator.shared.isRecording
-                button.image = NSImage(systemSymbolName: recording ? "stop.circle.fill" : "camera.viewfinder",
-                                       accessibilityDescription: "Snapture")
-                button.image?.isTemplate = !recording
-            }
+    private func refreshStatusIcon() {
+        guard let button = statusItem.button else { return }
+        let recording = RecordingCoordinator.shared.isRecording
+        let symbol: String
+        if LiveTranscriptionController.shared.isActive {
+            symbol = "waveform"
+        } else {
+            symbol = recording ? "stop.circle.fill" : "brain.head.profile"
         }
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: AppInfo.name)
+        button.image?.isTemplate = !recording
     }
 
     // MARK: - Menu construction
@@ -54,6 +60,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         let s = Settings.shared
 
+        addItem(menu, "Quick Actions…", #selector(showCommandBar), key: " ", mods: [.control, .option])
+        menu.addItem(.separator())
+
         addItem(menu, "Capture Area to Clipboard", #selector(captureArea), key: "4", mods: [.control, .option])
         addItem(menu, "OCR Region to Clipboard", #selector(captureOCR), key: "5", mods: [.control, .option])
         menu.addItem(.separator())
@@ -68,6 +77,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         addItem(menu, recording && RecordingCoordinator.shared.mode == .audioOnly ? "Stop Audio" : "Record Audio Only",
                 #selector(toggleAudioRecording))
+        addItem(menu, LiveTranscriptionController.shared.isActive
+                    ? "Stop Live Transcription"
+                    : "Live Transcription (heed)…",
+                #selector(toggleLiveTranscription), key: "t", mods: [.control, .option])
         menu.addItem(.separator())
 
         addItem(menu, "Clipboard History…", #selector(showClipboard), key: "v", mods: [.control, .option])
@@ -83,6 +96,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         settingsItem.submenu = buildSettingsMenu(s)
         menu.addItem(settingsItem)
 
+        addItem(menu, setupMenuTitle, #selector(showSetup))
         addItem(menu, "System Info & Recommendations…", #selector(showRecommendations))
         addItem(menu, "Open Data Folder", #selector(openSupportFolder))
         menu.addItem(.separator())
@@ -94,10 +108,19 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             menu.addItem(.separator())
         }
 
-        let version = NSMenuItem(title: "Snapture v\(AppInfo.version)", action: nil, keyEquivalent: "")
+        let version = NSMenuItem(title: "2ⁿᵈ Brain v\(AppInfo.version)", action: nil, keyEquivalent: "")
         version.isEnabled = false
         menu.addItem(version)
         addItem(menu, "Quit", #selector(quit), key: "q", mods: [.command])
+    }
+
+    /// Says outright when an engine is still missing, so the menu is the one
+    /// place that shows whether everything runs locally yet.
+    private var setupMenuTitle: String {
+        guard let missing = SetupManager.shared.missingCount, missing > 0 else {
+            return "Local Engines & Models…"
+        }
+        return "Local Engines & Models — \(missing) missing…"
     }
 
     private func buildAIMenu() -> NSMenu {
@@ -122,10 +145,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     private func buildSettingsMenu(_ s: Settings) -> NSMenu {
         let menu = NSMenu()
+        addToggle(menu, "Start at Login", LaunchAtLogin.isEnabled, #selector(toggleLaunchAtLogin))
+        menu.addItem(.separator())
+
         addToggle(menu, "Capture System Audio", s.captureSystemAudio, #selector(toggleSystemAudio))
         addToggle(menu, "Capture Microphone", s.captureMicrophone, #selector(toggleMic))
         addToggle(menu, "Auto-Transcribe Recordings", s.autoTranscribe, #selector(toggleAutoTranscribe))
-        addToggle(menu, "Speaker Diarization (WhisperX)", s.enableDiarization, #selector(toggleDiarization))
         let autoPaste = addItem(menu, "Auto-Paste from History (needs Accessibility)", #selector(enableAutoPaste))
         autoPaste.state = Permissions.hasAccessibility() ? .on : .off
         menu.addItem(.separator())
@@ -142,14 +167,58 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        let modelHeader = NSMenuItem(title: "Whisper Model", action: nil, keyEquivalent: "")
-        modelHeader.isEnabled = false
-        menu.addItem(modelHeader)
-        for model in ["tiny.en", "base.en", "small.en", "medium.en", "large-v3"] {
-            let item = NSMenuItem(title: model, action: #selector(setModel(_:)), keyEquivalent: "")
+        let languageItem = NSMenuItem(title: "Language", action: nil, keyEquivalent: "")
+        languageItem.submenu = buildLanguageMenu(s)
+        menu.addItem(languageItem)
+
+        // Tiron is the only engine that attributes speakers itself — its speaker
+        // cap applies whether it's the main engine or the pass after a live session.
+        if s.whisperBackend.attributesSpeakers || s.refineLiveWithTiron {
+            let speakersItem = NSMenuItem(title: "Max Speakers", action: nil, keyEquivalent: "")
+            speakersItem.submenu = buildMaxSpeakersMenu(s)
+            menu.addItem(speakersItem)
+        }
+        addToggle(menu, "Label Speakers After Live Sessions (Tiron)",
+                  s.refineLiveWithTiron, #selector(toggleRefineLive))
+
+        if s.whisperBackend.usesWhisperModel {
+            menu.addItem(.separator())
+            let modelHeader = NSMenuItem(title: "Whisper Model", action: nil, keyEquivalent: "")
+            modelHeader.isEnabled = false
+            menu.addItem(modelHeader)
+            for model in ["tiny.en", "base.en", "small.en", "medium.en", "large-v3"] {
+                let item = NSMenuItem(title: model, action: #selector(setModel(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = model
+                item.state = (s.whisperModel == model) ? .on : .off
+                menu.addItem(item)
+            }
+        }
+        return menu
+    }
+
+    private func buildLanguageMenu(_ s: Settings) -> NSMenu {
+        let menu = NSMenu()
+        let languages = [("auto", "Auto-Detect"), ("en", "English"), ("nl", "Dutch"),
+                         ("de", "German"), ("fr", "French"), ("es", "Spanish")]
+        for (code, name) in languages {
+            let item = NSMenuItem(title: name, action: #selector(setLanguage(_:)), keyEquivalent: "")
             item.target = self
-            item.representedObject = model
-            item.state = (s.whisperModel == model) ? .on : .off
+            item.representedObject = code
+            item.state = (s.transcriptionLanguage == code) ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    private func buildMaxSpeakersMenu(_ s: Settings) -> NSMenu {
+        let menu = NSMenu()
+        for count in [0, 2, 3, 4, 5, 6, 7, 8] {
+            let item = NSMenuItem(title: count == 0 ? "Auto (up to 8)" : "\(count)",
+                                  action: #selector(setMaxSpeakers(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = count
+            item.state = (s.tironMaxSpeakers == count) ? .on : .off
             menu.addItem(item)
         }
         return menu
@@ -174,6 +243,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     // MARK: - Actions
 
+    @objc private func showCommandBar() { CommandBar.shared.toggle() }
     @objc private func captureArea() { ScreenshotManager.shared.captureRegionToClipboard() }
     @objc private func captureOCR() { OCRManager.shared.captureRegionAndCopyText() }
     @objc private func recordCursorScreen() {
@@ -182,20 +252,54 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func stopRecording() { RecordingCoordinator.shared.stopIfRecording() }
     @objc private func openScreenPicker() { ScreenPicker.shared.show() }
     @objc private func toggleAudioRecording() { RecordingCoordinator.shared.toggleAudioRecording() }
+    @objc private func toggleLiveTranscription() { LiveTranscriptionController.shared.toggle() }
     @objc private func showClipboard() { ClipboardHistoryController.shared.toggle(relativeTo: statusItem.button) }
     @objc private func openSupportFolder() { NSWorkspace.shared.open(AppInfo.supportDirectory) }
+    @objc private func showSetup() { SetupWindowController.shared.present() }
     @objc private func showRecommendations() { SystemProfiler.shared.presentRecommendation(SystemProfiler.shared.recommend()) }
     @objc private func quit() { NSApp.terminate(nil) }
 
     @objc private func toggleSystemAudio() { Settings.shared.captureSystemAudio.toggle() }
     @objc private func toggleMic() { Settings.shared.captureMicrophone.toggle() }
     @objc private func toggleAutoTranscribe() { Settings.shared.autoTranscribe.toggle() }
-    @objc private func toggleDiarization() { Settings.shared.enableDiarization.toggle() }
+    @objc private func toggleRefineLive() { Settings.shared.refineLiveWithTiron.toggle() }
+
+    @objc private func toggleLaunchAtLogin() {
+        let enable = !LaunchAtLogin.isEnabled
+        do {
+            try LaunchAtLogin.setEnabled(enable)
+            if enable && LaunchAtLogin.needsApproval { promptLoginItemApproval() }
+        } catch {
+            Log.error("Launch at login \(enable ? "registration" : "removal") failed: \(error.localizedDescription)")
+            showAlert(title: enable ? "Couldn't Enable Start at Login" : "Couldn't Disable Start at Login",
+                      message: """
+                      \(error.localizedDescription)
+
+                      Starting at login requires the installed app — run 2ⁿᵈ Brain from \
+                      /Applications/2nd Brain.app (scripts/install.sh).
+                      """)
+        }
+    }
+
+    private func promptLoginItemApproval() {
+        let alert = NSAlert()
+        alert.messageText = "Approve 2ⁿᵈ Brain in Login Items"
+        alert.informativeText = """
+        macOS needs you to allow 2ⁿᵈ Brain in System Settings → General → \
+        Login Items & Extensions before it can start automatically.
+        """
+        alert.addButton(withTitle: "Open Settings")
+        alert.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            LaunchAtLogin.openLoginItemsSettings()
+        }
+    }
 
     @objc private func enableAutoPaste() {
         if Permissions.hasAccessibility() {
             showAlert(title: "Auto-Paste Enabled",
-                      message: "Snapture already has Accessibility access. Clicking a clipboard item will paste it into the frontmost app.")
+                      message: "2ⁿᵈ Brain already has Accessibility access. Clicking a clipboard item will paste it into the frontmost app.")
         } else {
             Permissions.requestAccessibility()
             Permissions.openAccessibilitySettings()
@@ -210,6 +314,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func setModel(_ sender: NSMenuItem) {
         if let model = sender.representedObject as? String { Settings.shared.whisperModel = model }
+    }
+
+    @objc private func setLanguage(_ sender: NSMenuItem) {
+        if let code = sender.representedObject as? String { Settings.shared.transcriptionLanguage = code }
+    }
+
+    @objc private func setMaxSpeakers(_ sender: NSMenuItem) {
+        if let count = sender.representedObject as? Int { Settings.shared.tironMaxSpeakers = count }
     }
 
     @objc private func setProvider(_ sender: NSMenuItem) {
