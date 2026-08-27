@@ -89,122 +89,26 @@ start_direct() {
     >> "$PROD/logs/overnight.stdout.log" \
     2>> "$PROD/logs/overnight.stderr.log" &
   echo $! > "$PROD/state/direct.pid"
-  echo "Waiting for Ollama to finish loading qwen3.5:4b before Cline…" >&2
-  local n=0 pid ollama_note
+  local n=0 pid
   pid="$(cat "$PROD/state/direct.pid" 2>/dev/null || true)"
-  while (( n < 900 )); do
-    pgrep -f '/opt/homebrew/bin/cline --cwd' >/dev/null 2>&1 && return 0
-    if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
-      return 1
+  while (( n < 10 )); do
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      return 0
     fi
-    if (( n % 10 == 0 )); then
-      ollama_note="$(python3 - "$PROD/state/progress.json" <<'PY' 2>/dev/null || true
-import json, os, sys
-path = sys.argv[1]
-if not os.path.isfile(path):
-    print("loading")
-    raise SystemExit
-try:
-    d = json.load(open(path, encoding="utf-8"))
-except Exception:
-    d = {}
-print(d.get("ollama") or d.get("bar") or "loading")
-PY
-)"
-      echo "  still waiting for Ollama (${n}s) — ${ollama_note:-loading}" >&2
-    fi
-    sleep 2
-    n=$((n + 2))
+    sleep 1
+    n=$((n + 1))
   done
   worker_started
 }
 
-# Same checks we used to type by hand: logs on disk + processes as the sandbox user.
-report_worker() {
-  echo "==> waiting 3s…"
-  sleep 3
-  echo "==> $PROD/logs"
-  ls -la "$PROD/logs" 2>/dev/null || echo "(no logs directory)"
-  echo "==> tail overnight.stdout.log"
-  tail -n 40 "$PROD/logs/overnight.stdout.log" 2>/dev/null || echo "(no overnight.stdout.log yet)"
-  echo "==> tail overnight.stderr.log"
-  tail -n 20 "$PROD/logs/overnight.stderr.log" 2>/dev/null || echo "(no overnight.stderr.log yet)"
-  echo "==> overnight / cline processes"
-  pgrep -lf overnight-run.sh 2>/dev/null || echo "(no overnight-run.sh)"
-  pgrep -lf /opt/homebrew/bin/cline 2>/dev/null || echo "(no homebrew cline)"
-  echo "==> launchd (optional 02:00 job)"
-  launchctl print system/com.dao.secondbrain.overnight 2>/dev/null \
-    | grep -E 'state =|pid =|last exit code|program =|runs =|error|user =' \
-    || echo "not loaded (Start does not need it)"
-  echo "==> queue"
-  found=0
-  for f in "$PROD/queue"/*.md "$PROD/queue"/*.txt; do
-    [[ -f "$f" ]] || continue
-    echo "${f##*/}"
-    found=1
-  done
-  if [[ "$found" -eq 0 ]]; then
-    echo "(empty)"
-  fi
-  echo "==> queue/failed"
-  ls -1 "$PROD/queue/failed" 2>/dev/null || echo "(none)"
-  echo "==> newest cline out"
-  newest_out="$(ls -t "$PROD/logs"/cline-*.out 2>/dev/null | head -1 || true)"
-  if [[ -n "$newest_out" ]]; then
-    echo "$newest_out"
-    tail -n 40 "$newest_out"
-  else
-    echo "(none yet)"
-  fi
-  echo "==> ollama on 127.0.0.1:11434"
-  if curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
-    curl -fsS -m 2 http://127.0.0.1:11434/api/tags \
-      | python3 -c 'import json,sys; d=json.load(sys.stdin); print(", ".join(m.get("name","") for m in d.get("models") or []) or "(no models pulled)")'
-  else
-    echo "not answering — overnight will brew install / start Ollama (no Desktop app)"
-  fi
-  echo "==> overnight-run.sh"
-  echo "direct: $HERE/overnight-run.sh"
-}
-
-case "$CMD" in
-  stop)
-    stop_workers
-    echo "stopped"
-    ;;
-  start)
-    stop_workers
-    rm -f "$VAULT/Notes/Overnight/STOP" "$PROD/STOP" "$DEV/STOP" \
-          "$PROD/state/stop" "$DEV/state/stop"
-    if [[ -x "$HERE/overnight-queue-sync.sh" ]]; then
-      bash "$HERE/overnight-queue-sync.sh" >/dev/null 2>&1 || true
-    fi
-    if start_direct; then
-      echo "started (direct worker as $USER — no admin)"
-    else
-      echo "started but worker did not appear — check $PROD/logs/overnight.stderr.log"
-    fi
-    report_worker
-    ;;
-  status)
-    if [[ -f "$VAULT/Notes/Overnight/STOP" || -f "$PROD/STOP" ]]; then
-      echo "stopped"
-    else
-      echo "running-until-stop"
-    fi
-    ;;
-  watch)
-    events="$PROD/logs/overnight.events.log"
-    progress="$PROD/state/progress.json"
-    if ! pgrep -f '/overnight-run.sh' >/dev/null 2>&1 && [[ ! -f "$events" ]]; then
-      echo "Overnight is not running. Start first: scripts/overnight-ctl.sh start" >&2
-      exit 1
-    fi
-    mkdir -p "$PROD/logs" "$PROD/state"
-    touch "$events"
-    echo "Watching overnight (Ctrl-C stops this watcher, not Cline)."
-    echo
-    python3 - "$events" "$progress" <<'PY'
+watch_overnight() {
+  local events="$PROD/logs/overnight.events.log"
+  local progress="$PROD/state/progress.json"
+  mkdir -p "$PROD/logs" "$PROD/state"
+  touch "$events"
+  echo "Watching overnight (Ctrl-C stops this watcher, not Cline)."
+  echo
+  python3 - "$events" "$progress" <<'PY'
 import json, os, sys, time
 from pathlib import Path
 
@@ -278,6 +182,93 @@ except KeyboardInterrupt:
         sys.stdout.write("\n")
     sys.stdout.flush()
 PY
+}
+
+# Same checks we used to type by hand: logs on disk + processes as the sandbox user.
+report_worker() {
+  echo "==> waiting 3s…"
+  sleep 3
+  echo "==> $PROD/logs"
+  ls -la "$PROD/logs" 2>/dev/null || echo "(no logs directory)"
+  echo "==> tail overnight.stdout.log"
+  tail -n 40 "$PROD/logs/overnight.stdout.log" 2>/dev/null || echo "(no overnight.stdout.log yet)"
+  echo "==> tail overnight.stderr.log"
+  tail -n 20 "$PROD/logs/overnight.stderr.log" 2>/dev/null || echo "(no overnight.stderr.log yet)"
+  echo "==> overnight / cline processes"
+  pgrep -lf overnight-run.sh 2>/dev/null || echo "(no overnight-run.sh)"
+  pgrep -lf /opt/homebrew/bin/cline 2>/dev/null || echo "(no homebrew cline)"
+  echo "==> launchd (optional 02:00 job)"
+  launchctl print system/com.dao.secondbrain.overnight 2>/dev/null \
+    | grep -E 'state =|pid =|last exit code|program =|runs =|error|user =' \
+    || echo "not loaded (Start does not need it)"
+  echo "==> queue"
+  found=0
+  for f in "$PROD/queue"/*.md "$PROD/queue"/*.txt; do
+    [[ -f "$f" ]] || continue
+    echo "${f##*/}"
+    found=1
+  done
+  if [[ "$found" -eq 0 ]]; then
+    echo "(empty)"
+  fi
+  echo "==> queue/failed"
+  ls -1 "$PROD/queue/failed" 2>/dev/null || echo "(none)"
+  echo "==> newest cline out"
+  newest_out="$(ls -t "$PROD/logs"/cline-*.out 2>/dev/null | head -1 || true)"
+  if [[ -n "$newest_out" ]]; then
+    echo "$newest_out"
+    tail -n 40 "$newest_out"
+  else
+    echo "(none yet)"
+  fi
+  echo "==> ollama on 127.0.0.1:11434"
+  if curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    curl -fsS -m 2 http://127.0.0.1:11434/api/tags \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); print(", ".join(m.get("name","") for m in d.get("models") or []) or "(no models pulled)")'
+  else
+    echo "not answering — overnight will brew install / start Ollama (no Desktop app)"
+  fi
+  echo "==> overnight-run.sh"
+  echo "direct: $HERE/overnight-run.sh"
+}
+
+case "$CMD" in
+  stop)
+    stop_workers
+    echo "stopped"
+    ;;
+  start)
+    stop_workers
+    rm -f "$VAULT/Notes/Overnight/STOP" "$PROD/STOP" "$DEV/STOP" \
+          "$PROD/state/stop" "$DEV/state/stop"
+    if [[ -x "$HERE/overnight-queue-sync.sh" ]]; then
+      bash "$HERE/overnight-queue-sync.sh" >/dev/null 2>&1 || true
+    fi
+    if start_direct; then
+      echo "started (direct worker as $USER — no admin)"
+    else
+      echo "started but worker did not appear — check $PROD/logs/overnight.stderr.log"
+    fi
+    if [[ -t 1 ]]; then
+      watch_overnight
+    else
+      report_worker
+    fi
+    ;;
+  status)
+    if [[ -f "$VAULT/Notes/Overnight/STOP" || -f "$PROD/STOP" ]]; then
+      echo "stopped"
+    else
+      echo "running-until-stop"
+    fi
+    ;;
+  watch)
+    if ! pgrep -f '/overnight-run.sh' >/dev/null 2>&1 \
+        && [[ ! -f "$PROD/logs/overnight.events.log" ]]; then
+      echo "Overnight is not running. Start first: scripts/overnight-ctl.sh start" >&2
+      exit 1
+    fi
+    watch_overnight
     ;;
   ollama)
     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
