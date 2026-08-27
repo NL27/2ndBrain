@@ -4,6 +4,7 @@
 set -uo pipefail
 # launchd PATH is /usr/bin:/bin; Cline shells out to ioreg in /usr/sbin.
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 ENV_NAME="${SECONDBRAIN_ENV:-production}"
 if [[ -z "${SECONDBRAIN_SANDBOX_DIR:-}" ]]; then
@@ -291,8 +292,11 @@ if not text:
 print("Ollama ok:", text[:80], file=sys.stderr)
 PY
 }
+
 ensure_ollama
-verify_ollama
+if ! verify_ollama; then
+  echo "Ollama generate did not return text — Cline will still try (server is up)" >&2
+fi
 
 mkdir -p "$DROP/bin"
 ln -sfn /usr/sbin/ioreg "$DROP/bin/ioreg" 2>/dev/null || true
@@ -485,8 +489,11 @@ while true; do
   ITEM="$(next_item)"
   if [[ -z "$ITEM" ]]; then
     if [[ "$UNTIL_STOP" == "1" ]]; then
-      echo "queue empty — waiting 30s (until stop). Drop a .md into $QUEUE" >&2
-      sleep 30
+      if [[ -x "$SCRIPT_DIR/overnight-queue-sync.sh" ]]; then
+        bash "$SCRIPT_DIR/overnight-queue-sync.sh" >/dev/null 2>&1 || true
+      fi
+      echo "queue empty — waiting 60s for the next vault file (until stop)" >&2
+      sleep 60
       continue
     fi
     break
@@ -639,10 +646,24 @@ PY
     LAST_COMPLETED="$ITEM"
     write_state lastCompleted "$ITEM"
     log_event item_done runId "$RUN_ID" item "$ITEM" iters "$ITER"
+    rm -f "$DROP/state/retries.$ITEM"
   else
-    mkdir -p "$QUEUE/failed" || true
-    mv "$QUEUE/$ITEM" "$QUEUE/failed/$ITEM" 2>/dev/null || true
-    log_event item_fail runId "$RUN_ID" item "$ITEM" rc "$ITEM_RC"
+    # Timeouts and Cline rc=1 are not "queue empty". Keep the file and retry.
+    retry_file="$DROP/state/retries.$ITEM"
+    retry_n=0
+    [[ -f "$retry_file" ]] && retry_n="$(cat "$retry_file" 2>/dev/null || echo 0)"
+    retry_n=$((retry_n + 1))
+    echo "$retry_n" > "$retry_file"
+    if (( retry_n < 5 )); then
+      echo "Cline failed ($ITEM rc=$ITEM_RC) — leaving it in queue (retry $retry_n/5)" >&2
+      log_event item_retry runId "$RUN_ID" item "$ITEM" rc "$ITEM_RC" retry "$retry_n"
+      sleep 15
+    else
+      mkdir -p "$QUEUE/failed" || true
+      mv "$QUEUE/$ITEM" "$QUEUE/failed/$ITEM" 2>/dev/null || true
+      rm -f "$retry_file"
+      log_event item_fail runId "$RUN_ID" item "$ITEM" rc "$ITEM_RC"
+    fi
   fi
   if (( ITEM_RC != 0 )); then ANY_FAIL=1; fi
   ITEMS_DONE=$((ITEMS_DONE + 1))
