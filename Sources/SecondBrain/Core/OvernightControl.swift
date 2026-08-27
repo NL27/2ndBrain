@@ -68,7 +68,7 @@ enum OvernightControl {
                 return "\(name): working — \(item)"
             }
             if status == "running" { return "\(name): starting (pid \(pid.isEmpty ? "?" : pid))" }
-            if !daemonLoaded { return "\(name): daemon not loaded — re-run defend (admin)" }
+            if !daemonLoaded { return "\(name): daemon not loaded — Start asks for admin" }
             return "\(name): until-stop, idle (\(status.isEmpty ? "waiting" : status))"
         }
     }

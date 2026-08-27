@@ -26,7 +26,7 @@ Done when: concrete check (build, workflow id, note path).
 Do not: git push, new MCP, secrets, vault zip.
 ```
 
-Production and development run **until you stop them** (menu **Stop overnight agents**, or `Notes/Overnight/STOP`). A 7-day safety cap remains. 02:00 still starts a session; **Start overnight agents** clears STOP and touches `run-now` (LaunchDaemon WatchPaths after defend has been re-run with admin).
+Production and development run **until you stop them** (menu **Stop overnight agents**, or `Notes/Overnight/STOP`). A 7-day safety cap remains. **Start** (`scripts/overnight-ctl.sh start`) clears STOP, syncs the queue, and if the LaunchDaemon is missing asks for an admin password to install it. 02:00 still starts a session once the daemon is loaded.
 
 Overnight Cline is the **`cline` CLI**, not the VS Code extension. Setup runs `npm install -g cline` and (on admin defend) copies it to `/usr/local/bin/cline` and `/Users/secondbrain-{agent,dev}/.local/bin/cline`. If a night log says `cline is not installed`, re-run **Install missing** then defend.
 

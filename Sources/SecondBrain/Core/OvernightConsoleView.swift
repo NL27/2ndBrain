@@ -110,7 +110,7 @@ struct OvernightConsoleView: View {
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
             }
-            Text("Start copies the vault queue, clears STOP, and wakes the LaunchDaemon (or waits until 02:00 if defend has not been re-run with admin). This window tails the Shared logs — you should see a pid and a queue filename when it is actually working.")
+            Text("Start copies the vault queue, clears STOP, and loads the overnight daemon (macOS may ask for an admin password). This window tails the Shared logs — you should see a pid and a queue filename when it is actually working.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

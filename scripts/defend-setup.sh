@@ -289,12 +289,24 @@ if maybe_little_snitch; then
 fi
 python3 "$SANDBOX_DIR/activity-watch.py" >/dev/null 2>&1 || true
 
-if user_exists && acl_present && dev_exists; then
-  emit defend ok "Production + development sandbox users already isolated"
+overnight_daemon_loaded() {
+  launchctl print system/com.dao.secondbrain.overnight >/dev/null 2>&1
+}
+
+cline_for_overnight() {
+  [[ -x /usr/local/bin/cline ]] \
+    || [[ -x /opt/homebrew/bin/cline ]] \
+    || [[ -x /Users/secondbrain-agent/.local/bin/cline ]]
+}
+
+# Users can exist from an older setup while the overnight LaunchDaemon was never
+# loaded — Start then reports "daemon is not loaded" and 02:00 never fires.
+if user_exists && acl_present && dev_exists && overnight_daemon_loaded && cline_for_overnight; then
+  emit defend ok "Production + development sandbox users isolated; overnight daemon loaded"
   exit 0
 fi
 
-emit defend installing "Creating isolated user $AGENT_USER (admin password required)"
+emit defend installing "Refreshing overnight isolation (admin password required)"
 export SECONDBRAIN_INTERACTIVE_USER="$USER"
 export SECONDBRAIN_INTERACTIVE_HOME="$HOME"
 PRIV="$HERE/defend-privileged.sh"
