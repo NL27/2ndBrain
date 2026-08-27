@@ -49,25 +49,8 @@ touch_run_now() {
   date -u +%Y-%m-%dT%H:%M:%SZ > "$DEV/state/run-now"
 }
 
-# Copy 01–05 into the vault queue and pull them out of failed/done so Start
-# actually runs the five in ls order. 00-smoke.md sorts first and would steal the run.
 seed_production_queue() {
-  local root src n bin
-  root="$(cd "$HERE/.." && pwd)"
-  src="$root/Resources/overnight-queue"
-  [[ -d "$src" ]] || return 0
-  mkdir -p "$VAULT/Notes/Overnight/queue" \
-    "$PROD/queue/done" "$PROD/queue/failed" "$PROD/queue/rejected"
-  rm -f "$VAULT/Notes/Overnight/queue/00-smoke.md" "$PROD/queue/00-smoke.md"
-  for n in 01-morning-brief.md 02-queue-gate.md 03-offer-privacy.md \
-           04-system-improvements.md 05-holistic-health.md; do
-    [[ -f "$src/$n" ]] || continue
-    for bin in done failed rejected; do
-      rm -f "$PROD/queue/$bin/$n" "$VAULT/Notes/Overnight/queue/$bin/$n"
-    done
-    cp -f "$src/$n" "$VAULT/Notes/Overnight/queue/$n"
-    rm -f "$PROD/state/retries.$n"
-  done
+  bash "$HERE/overnight-queue-seed.sh"
 }
 
 worker_started() {
@@ -106,13 +89,29 @@ start_direct() {
     >> "$PROD/logs/overnight.stdout.log" \
     2>> "$PROD/logs/overnight.stderr.log" &
   echo $! > "$PROD/state/direct.pid"
-  echo "Waiting for Ollama warmup, then Cline…" >&2
-  local n=0 pid
+  echo "Waiting for Ollama to finish loading qwen3.5:4b before Cline…" >&2
+  local n=0 pid ollama_note
   pid="$(cat "$PROD/state/direct.pid" 2>/dev/null || true)"
-  while (( n < 90 )); do
+  while (( n < 900 )); do
     pgrep -f '/opt/homebrew/bin/cline --cwd' >/dev/null 2>&1 && return 0
     if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
       return 1
+    fi
+    if (( n % 10 == 0 )); then
+      ollama_note="$(python3 - "$PROD/state/progress.json" <<'PY' 2>/dev/null || true
+import json, os, sys
+path = sys.argv[1]
+if not os.path.isfile(path):
+    print("loading")
+    raise SystemExit
+try:
+    d = json.load(open(path, encoding="utf-8"))
+except Exception:
+    d = {}
+print(d.get("ollama") or d.get("bar") or "loading")
+PY
+)"
+      echo "  still waiting for Ollama (${n}s) — ${ollama_note:-loading}" >&2
     fi
     sleep 2
     n=$((n + 2))
@@ -145,7 +144,7 @@ report_worker() {
     found=1
   done
   if [[ "$found" -eq 0 ]]; then
-    echo "(empty — copy 00-smoke.md here)"
+    echo "(empty — 01–05 will be seeded)"
   fi
   echo "==> queue/failed"
   ls -1 "$PROD/queue/failed" 2>/dev/null || echo "(none)"
@@ -197,6 +196,31 @@ case "$CMD" in
     ;;
   watch)
     pid="$(pgrep -n -f '/opt/homebrew/bin/cline --cwd' || true)"
+    if [[ -z "$pid" ]]; then
+      if pgrep -f '/overnight-run.sh' >/dev/null 2>&1; then
+        echo "Cline is waiting for Ollama to finish loading. Watching warmup…"
+        while pgrep -f '/overnight-run.sh' >/dev/null 2>&1; do
+          pid="$(pgrep -n -f '/opt/homebrew/bin/cline --cwd' || true)"
+          [[ -n "$pid" ]] && break
+          python3 - "$PROD/state/progress.json" <<'PY' 2>/dev/null || true
+import json, os, sys
+path = sys.argv[1]
+if not os.path.isfile(path):
+    print("still waiting  Ollama has not started loading yet")
+    raise SystemExit
+try:
+    d = json.load(open(path, encoding="utf-8"))
+except Exception:
+    d = {}
+bar = d.get("bar") or ""
+ollama = d.get("ollama") or "loading"
+print(f"still waiting  {bar}  ollama={ollama}")
+PY
+          sleep 5
+        done
+      fi
+      pid="$(pgrep -n -f '/opt/homebrew/bin/cline --cwd' || true)"
+    fi
     if [[ -z "$pid" ]]; then
       echo "Cline is not running. Start first: scripts/overnight-ctl.sh start" >&2
       exit 1
@@ -267,7 +291,9 @@ req = urllib.request.Request(
         "model": "qwen3.5:4b",
         "prompt": "Reply with the single word ok.",
         "stream": False,
-        "options": {"num_predict": 8},
+        "think": False,
+        "keep_alive": -1,
+        "options": {"num_predict": 32, "temperature": 0},
     }).encode(),
     headers={"Content-Type": "application/json"},
     method="POST",

@@ -263,40 +263,125 @@ PY
   echo "Ollama listening on 127.0.0.1:11434" >&2
 }
 
-# A normal Ollama generate. If this fails, Cline will fail too — stop here.
-verify_ollama() {
-  echo "Checking Ollama with one short generate (qwen3.5:4b)…" >&2
+ollama_model_resident() {
   python3 - <<'PY'
 import json, sys, urllib.request
-req = urllib.request.Request(
-    "http://127.0.0.1:11434/api/generate",
-    data=json.dumps({
-        "model": "qwen3.5:4b",
+want = "qwen3.5:4b"
+try:
+    with urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=5) as r:
+        names = [m.get("name") or "" for m in json.load(r).get("models") or []]
+except Exception:
+    sys.exit(1)
+for n in names:
+    if want in n:
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# Block until qwen3.5:4b is in RAM and has returned at least one token.
+# Cline must not start while /api/ps is empty (that is "loading model").
+wait_for_ollama_ready() {
+  echo "Waiting for Ollama to finish loading qwen3.5:4b — Cline will not start yet…" >&2
+  python3 - "$DROP/state/progress.json" <<'PY'
+import json, os, sys, time, urllib.error, urllib.request
+from datetime import datetime, timezone
+
+progress_path = sys.argv[1]
+model = "qwen3.5:4b"
+deadline = time.time() + 900
+attempt = 0
+
+def write_progress(ollama, elapsed, note):
+    w = 24
+    pos = (max(elapsed, 0) // 5) % w
+    bar = "[" + (" " * pos) + "█" + (" " * (w - pos - 1)) + f"] {elapsed}s"
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    doc = {
+        "ts": ts, "type": "ollama_warmup", "elapsed_s": elapsed,
+        "item": "warmup", "ollama": ollama, "bar": bar, "alive": True,
+        "note": note,
+    }
+    os.makedirs(os.path.dirname(progress_path), exist_ok=True)
+    open(progress_path, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+    print(f"still waiting  {bar}  ollama={ollama}  {note}", file=sys.stderr, flush=True)
+
+def resident():
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=5) as r:
+            names = [m.get("name") or "" for m in json.load(r).get("models") or []]
+        return any(model in n for n in names), ", ".join(n for n in names if n) or "loading model"
+    except Exception:
+        return False, "not answering"
+
+started = time.time()
+while time.time() < deadline:
+    attempt += 1
+    elapsed = int(time.time() - started)
+    loaded, ps = resident()
+    write_progress(ps, elapsed, f"generate attempt {attempt}")
+    payload = {
+        "model": model,
         "prompt": "Reply with the single word ok.",
         "stream": False,
-        "options": {"num_predict": 8},
-    }).encode(),
-    headers={"Content-Type": "application/json"},
-    method="POST",
-)
-try:
-    with urllib.request.urlopen(req, timeout=180) as r:
-        body = json.loads(r.read().decode())
-except Exception as e:
-    print("Ollama generate failed:", e, file=sys.stderr)
-    sys.exit(1)
-text = (body.get("response") or "").strip().replace("\n", " ")
-if not text:
-    print("Ollama generate returned empty text", file=sys.stderr)
-    sys.exit(1)
-print("Ollama ok:", text[:80], file=sys.stderr)
+        "think": False,
+        "keep_alive": -1,
+        "options": {"num_predict": 32, "temperature": 0},
+    }
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/generate",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=300) as r:
+            body = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        err = e.read().decode(errors="replace")[:240]
+        write_progress("loading model", int(time.time() - started), f"HTTP {e.code}")
+        print(f"Ollama still loading (attempt {attempt}): HTTP {e.code} {err}", file=sys.stderr, flush=True)
+        time.sleep(5)
+        continue
+    except Exception as e:
+        write_progress("loading model", int(time.time() - started), str(e)[:80])
+        print(f"Ollama still loading (attempt {attempt}): {e}", file=sys.stderr, flush=True)
+        time.sleep(5)
+        continue
+    if body.get("error"):
+        err = str(body.get("error"))[:240]
+        write_progress("loading model", int(time.time() - started), err)
+        print(f"Ollama still loading (attempt {attempt}): {err}", file=sys.stderr, flush=True)
+        time.sleep(5)
+        continue
+    text = (body.get("response") or "").strip().replace("\n", " ")
+    thinking = (body.get("thinking") or "").strip()
+    loaded, ps = resident()
+    if text or thinking:
+        note = text[:80] if text else "model in RAM (thinking-only reply)"
+        write_progress(ps if loaded else model, int(time.time() - started), "ready")
+        print("Ollama ready:", note, file=sys.stderr, flush=True)
+        sys.exit(0)
+    print(
+        f"Ollama generate empty (attempt {attempt}); RAM={ps}",
+        file=sys.stderr, flush=True,
+    )
+    time.sleep(5)
+
+print("Ollama did not finish loading within 15 minutes", file=sys.stderr)
+sys.exit(1)
 PY
 }
 
 ensure_ollama
-if ! verify_ollama; then
-  echo "Ollama generate did not return text — Cline will still try (server is up)" >&2
-fi
+until wait_for_ollama_ready; do
+  if [[ -f "$DROP/STOP" || -f "$DROP/state/stop" ]]; then
+    echo "stopped while waiting for Ollama" >&2
+    exit 0
+  fi
+  echo "Ollama is not ready — Cline is still waiting (retry in 20s)" >&2
+  sleep 20
+done
 
 mkdir -p "$DROP/bin"
 ln -sfn /usr/sbin/ioreg "$DROP/bin/ioreg" 2>/dev/null || true
@@ -489,11 +574,18 @@ while true; do
   ITEM="$(next_item)"
   if [[ -z "$ITEM" ]]; then
     if [[ "$UNTIL_STOP" == "1" ]]; then
+      echo "queue empty — putting 01–05 back so Cline always has work" >&2
+      if [[ -x "$SCRIPT_DIR/overnight-queue-seed.sh" ]]; then
+        bash "$SCRIPT_DIR/overnight-queue-seed.sh" >/dev/null 2>&1 || true
+      fi
       if [[ -x "$SCRIPT_DIR/overnight-queue-sync.sh" ]]; then
         bash "$SCRIPT_DIR/overnight-queue-sync.sh" >/dev/null 2>&1 || true
       fi
-      echo "queue empty — waiting 60s for the next vault file (until stop)" >&2
-      sleep 60
+      ITEM="$(next_item)"
+      if [[ -z "$ITEM" ]]; then
+        echo "queue still empty after seed — waiting 15s (until stop)" >&2
+        sleep 15
+      fi
       continue
     fi
     break
@@ -567,7 +659,16 @@ EOF
       touch "$f" 2>/dev/null || true
     done
     echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) slice start bin=$CLINE_BIN item=$ITEM backend=$CLINE_SESSION_BACKEND_MODE ===" >> "$CLINE_ERR"
-    echo "launching cline (stdout $CLINE_OUT)…" >&2
+    while ! ollama_model_resident; do
+      if stop_requested; then
+        ITEM_RC=0
+        break 2
+      fi
+      echo "Ollama unloaded qwen3.5:4b — loading it before Cline…" >&2
+      wait_for_ollama_ready && break
+      sleep 10
+    done
+    echo "Ollama has qwen3.5:4b in RAM — launching cline (stdout $CLINE_OUT)…" >&2
     set +e
     "${WRAP[@]}" >> "$CLINE_OUT" 2>> "$CLINE_ERR" &
     cline_pid=$!
