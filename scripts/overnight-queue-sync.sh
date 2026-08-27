@@ -33,13 +33,26 @@ for path in list(prod.iterdir()):
 PY
 
 if command -v rsync >/dev/null; then
-  rsync -a --delete --exclude done/ --exclude rejected/ --exclude README.md --exclude readme.md \
+  rsync -a --delete --exclude done/ --exclude rejected/ --exclude failed/ --exclude README.md --exclude readme.md \
     "$PROD_VAULT/" "$PROD_DROP/queue/" 2>/dev/null || true
-  rsync -a --delete --exclude done/ --exclude rejected/ --exclude README.md --exclude readme.md \
+  rsync -a --delete --exclude done/ --exclude rejected/ --exclude failed/ --exclude README.md --exclude readme.md \
     "$DEV_VAULT/" "$DEV_DROP/queue/" 2>/dev/null || true
 else
   cp -R "$PROD_VAULT/." "$PROD_DROP/queue/" 2>/dev/null || true
   cp -R "$DEV_VAULT/." "$DEV_DROP/queue/" 2>/dev/null || true
+fi
+
+# Standing mission lives beside the queues so rsync --delete cannot eat it.
+if [[ -f "$VAULT/Notes/Overnight/standing-mission.md" ]]; then
+  cp -f "$VAULT/Notes/Overnight/standing-mission.md" "$PROD_DROP/queue/standing-mission.md"
+fi
+
+# Human STOP: vault file wins. Remove it to let agents run until the next Stop.
+if [[ -f "$VAULT/Notes/Overnight/STOP" ]]; then
+  printf 'stop\n' > "$PROD_DROP/STOP"
+  printf 'stop\n' > "$DEV_DROP/STOP"
+else
+  rm -f "$PROD_DROP/STOP" "$DEV_DROP/STOP" "$PROD_DROP/state/stop" "$DEV_DROP/state/stop"
 fi
 
 if [[ -f "$PROD_DROP/work/last-run.md" ]]; then

@@ -19,6 +19,9 @@ YOLO mode can read any file the process can open and send it to the act model. T
 - Recordings, screenshots, OCR, transcripts unless the human explicitly asks to send that file
 - Clipboard history
 - Connection logs (IPs are still personal)
+- CalDAV password (`credentials.env` / `caldav.env`) — loopback calendar only
+- Full calendar titles, attendees, and join ICS files
+- Booking **times** in `Notes/Calendar/offer-*.md` may be sent to a person the human named (times only, no event titles)
 
 ## Cloud AI / Cline
 

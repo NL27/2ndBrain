@@ -17,6 +17,8 @@ Unexpected launchd jobs survive a reboot and outlive a bad overnight run.
 | `com.dao.secondbrain.snitch-keeper` | LaunchAgent + LaunchDaemon (Little Snitch filter every 3h) |
 | `com.dao.secondbrain.overnight` | LaunchDaemon (02:00 production) |
 | `com.dao.secondbrain.overnight-dev` | LaunchDaemon (02:30 development) |
+| `com.dao.secondbrain.radicale` | LaunchAgent (CalDAV on 127.0.0.1:5232) |
+| `com.dao.secondbrain.caldav-sync` | LaunchAgent (vault due-tasks → VTODO hourly) |
 | 2ⁿᵈ Brain.app Start at Login | SMAppService login item, not launchd |
 
 List: `Resources/sandbox/known-persistence.json`. Check: `python3 scripts/host-integrity.py`.

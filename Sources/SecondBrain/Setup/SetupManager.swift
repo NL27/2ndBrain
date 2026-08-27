@@ -116,8 +116,15 @@ final class SetupManager: ObservableObject {
         phase = newPhase
         summary = ""
         pending = ""
-        if newPhase == .installing { log = "" }
-        for index in steps.indices where !(newPhase == .checking && steps[index].isSatisfied) {
+        if newPhase == .installing {
+            if log.isEmpty {
+                log = "Installing only what is missing. Already-finished engines stay on disk; downloads resume after a drop.\n"
+            } else {
+                log += "\n— Resuming: skipping what is already installed —\n"
+            }
+        }
+        for index in steps.indices {
+            if steps[index].isSatisfied { continue }
             steps[index].state = .unknown
         }
 
@@ -268,6 +275,8 @@ extension SetupManager.Step {
               purpose: "Markdown second brain with graph search MCP"),
         .init(id: "obsidian", title: "Obsidian + vault plugins",
               purpose: "Graph view over the vault: calendar, tasks, search, local AI"),
+        .init(id: "caldav", title: "Local CalDAV calendar",
+              purpose: "Radicale on 127.0.0.1 — Apple Calendar, vault task sync, no Google"),
         .init(id: "defend", title: "Sandbox user + network guard",
               purpose: "Prod + dev overnight users, activity watch, Little Snitch 3h filter keeper"),
         .init(id: ollamaID, title: "Ollama (optional)",

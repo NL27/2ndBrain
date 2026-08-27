@@ -113,7 +113,7 @@ says how many pieces are still missing. The same work is available as a script:
 
 ```bash
 scripts/bootstrap.sh --check     # what's installed, changes nothing
-scripts/bootstrap.sh             # install whatever is missing
+scripts/bootstrap.sh             # install whatever is missing (resumes after a drop)
 ```
 
 ### Grant permissions on first use

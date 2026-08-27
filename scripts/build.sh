@@ -47,6 +47,11 @@ cp "$ROOT/scripts/host-integrity.py" "$APP/Contents/Resources/host-integrity.py"
 cp "$ROOT/scripts/activity-watch.py" "$APP/Contents/Resources/activity-watch.py"
 cp "$ROOT/scripts/little-snitch-keeper.sh" "$APP/Contents/Resources/little-snitch-keeper.sh"
 cp "$ROOT/scripts/overnight-queue-sync.sh" "$APP/Contents/Resources/overnight-queue-sync.sh"
+cp "$ROOT/scripts/overnight-ctl.sh" "$APP/Contents/Resources/overnight-ctl.sh"
+cp "$ROOT/scripts/caldav-setup.sh" "$APP/Contents/Resources/caldav-setup.sh"
+cp "$ROOT/scripts/caldav-sync.py" "$APP/Contents/Resources/caldav-sync.py"
+cp "$ROOT/scripts/caldav_lib.py" "$APP/Contents/Resources/caldav_lib.py"
+cp "$ROOT/scripts/caldav-book.py" "$APP/Contents/Resources/caldav-book.py"
 chmod +x "$APP/Contents/Resources/defend-setup.sh" \
          "$APP/Contents/Resources/defend-privileged.sh" \
          "$APP/Contents/Resources/network-guard.py" \
@@ -55,13 +60,21 @@ chmod +x "$APP/Contents/Resources/defend-setup.sh" \
          "$APP/Contents/Resources/host-integrity.py" \
          "$APP/Contents/Resources/activity-watch.py" \
          "$APP/Contents/Resources/little-snitch-keeper.sh" \
-         "$APP/Contents/Resources/overnight-queue-sync.sh"
+         "$APP/Contents/Resources/overnight-queue-sync.sh" \
+         "$APP/Contents/Resources/overnight-ctl.sh" \
+         "$APP/Contents/Resources/caldav-setup.sh" \
+         "$APP/Contents/Resources/caldav-sync.py" \
+         "$APP/Contents/Resources/caldav_lib.py" \
+         "$APP/Contents/Resources/caldav-book.py"
 cp "$ROOT/Resources/sandbox/"* "$APP/Contents/Resources/sandbox/"
 cp -R "$ROOT/skills/mac-defend" "$ROOT/skills/mac-network-guard" "$ROOT/skills/overnight-sandbox" \
      "$ROOT/skills/secrets-hygiene" "$ROOT/skills/data-boundary" \
      "$ROOT/skills/prompt-injection-guard" "$ROOT/skills/mcp-trust" \
      "$ROOT/skills/persistence-hygiene" "$ROOT/skills/vault-exposure" \
      "$ROOT/skills/agent-hard-limits" \
+     "$ROOT/skills/overnight-ops" "$ROOT/skills/local-first-models" \
+     "$ROOT/skills/vault-cadence" "$ROOT/skills/caldav-local" \
+     "$ROOT/skills/autonomous-loop" \
      "$APP/Contents/Resources/skills/"
 
 if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then

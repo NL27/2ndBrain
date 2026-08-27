@@ -24,6 +24,10 @@ Development **must not** read `/Users/Shared/2nd-Brain-Night`, the vault, or pro
 
 `overnight-run.sh` selects the env from `SECONDBRAIN_ENV` and prepends hard limits. Do not strip that prefix.
 
+Budget (from `environments.json`): **until stop** (`timeout` 0). Safety cap 7 days production / 2 days development. Slice timeout and max eval loops per item still apply. Stop file: `{drop}/STOP` (copied from `Notes/Overnight/STOP`).
+
+Each queue item is plan → act → `eval.json`. If that item is done, the runner takes the next file. If the queue is empty it refines the last finished mission until the human stops. `Notes/Overnight/standing-mission.md` is used when present.
+
 ## After the run
 
 Production summary: `Notes/Overnight/last-run.md`. Development: `last-run-dev.md`. **Do not merge to a personal branch unattended.**

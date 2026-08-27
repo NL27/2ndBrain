@@ -7,10 +7,11 @@
 #
 # Usage:
 #   scripts/install.sh                        # build + install the app
-#   scripts/install.sh --with-engines         # also install every engine + model now
+#   scripts/install.sh --with-engines         # also install missing engines + models
 #   scripts/install.sh --only tiron,heed      # install only these (see bootstrap.sh)
 #   scripts/install.sh --with-engines --with-ollama   # include a local LLM
 #   scripts/install.sh --model small.en       # which whisper model to download
+# Engine install is resume-safe: re-run after a disconnect; finished pieces stay.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -87,7 +88,7 @@ cp -R "$ROOT/dist/2nd Brain.app" "/Applications/2nd Brain.app"
 
 # --- 3. Optional: every local engine + model now ------------------------------
 if [[ "$WITH_ENGINES" -eq 1 ]]; then
-  echo "==> Installing local engines and models (this downloads several GB)…"
+  echo "==> Installing local engines and models (resumes if the network drops)…"
   bash "$ROOT/scripts/bootstrap.sh" "${BOOTSTRAP_ARGS[@]+"${BOOTSTRAP_ARGS[@]}"}" || \
     echo "    (Some engines need attention — the app's setup window shows which.)"
 fi

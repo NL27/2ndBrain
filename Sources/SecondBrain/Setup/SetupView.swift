@@ -237,7 +237,7 @@ struct SetupView: View {
                     .keyboardShortcut(.defaultAction)
             } else {
                 Button("Skip for Now") { onClose() }
-                Button("Install Everything") {
+                Button("Install missing") {
                     Task { await manager.installMissing() }
                 }
                 .keyboardShortcut(.defaultAction)

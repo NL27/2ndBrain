@@ -99,6 +99,10 @@ install_overnight_daemon() {
     <key>Hour</key><integer>${hour}</integer>
     <key>Minute</key><integer>${minute}</integer>
   </dict>
+  <key>WatchPaths</key>
+  <array>
+    <string>${drop}/state/run-now</string>
+  </array>
   <key>WorkingDirectory</key><string>${drop}</string>
   <key>StandardOutPath</key><string>${drop}/logs/overnight.stdout.log</string>
   <key>StandardErrorPath</key><string>${drop}/logs/overnight.stderr.log</string>
@@ -171,7 +175,19 @@ fi
 
 cp -f "$HERE/overnight-run.sh" "$SUPPORT_SYS/overnight-run.sh" 2>/dev/null || true
 cp -f "$HERE/little-snitch-keeper.sh" "$SUPPORT_SYS/little-snitch-keeper.sh" 2>/dev/null || true
-chmod 755 "$SUPPORT_SYS/overnight-run.sh" "$SUPPORT_SYS/little-snitch-keeper.sh" 2>/dev/null || true
+cp -f "$HERE/caldav-sync.py" "$HERE/caldav_lib.py" "$HERE/caldav-book.py" "$HERE/overnight-ctl.sh" \
+  "$SUPPORT_SYS/" 2>/dev/null || true
+chmod 755 "$SUPPORT_SYS/overnight-run.sh" "$SUPPORT_SYS/little-snitch-keeper.sh" \
+  "$SUPPORT_SYS/caldav-sync.py" "$SUPPORT_SYS/caldav-book.py" "$SUPPORT_SYS/overnight-ctl.sh" 2>/dev/null || true
+
+# CalDAV password for production overnight (loopback). Not for secondbrain-dev.
+CREDS_FILE="${INTERACTIVE_HOME}/Library/Application Support/SecondBrain/radicale/credentials.env"
+if [[ -f "$CREDS_FILE" ]]; then
+  mkdir -p "/Users/secondbrain-agent/.config/secondbrain"
+  cp -f "$CREDS_FILE" "/Users/secondbrain-agent/.config/secondbrain/caldav.env"
+  chown secondbrain-agent:staff "/Users/secondbrain-agent/.config/secondbrain/caldav.env"
+  chmod 600 "/Users/secondbrain-agent/.config/secondbrain/caldav.env"
+fi
 
 install_overnight_daemon com.dao.secondbrain.overnight \
   secondbrain-agent "$GROUP_PROD" "$DROP_PROD" production 2 0 secondbrain-agent.sb

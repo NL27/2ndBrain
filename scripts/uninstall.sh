@@ -46,6 +46,9 @@ Notes:
   • Your vault at ~/Desktop/2nd Brain is left alone — notes, screenshots, recordings
     and transcripts all stay, as does the Obsidian side of it. Delete it by hand if
     you really mean to.
+  • Local CalDAV (Radicale) data is in ~/Library/Application Support/SecondBrain/radicale
+    and LaunchAgents com.dao.secondbrain.radicale / caldav-sync. Remove those plists if
+    you no longer want a local calendar server.
   • The overnight sandbox users `secondbrain-agent` (production) and
     `secondbrain-dev` (development) are also left alone (deleting a
     macOS user is irreversible from this script). Remove them in System Settings →

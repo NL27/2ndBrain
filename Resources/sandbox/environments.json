@@ -12,7 +12,11 @@
       "allow_ips_file": "/usr/local/etc/secondbrain/allow.ips",
       "network": "allowlist",
       "mcp": false,
-      "timeout": 3600,
+      "timeout": 0,
+      "safety_timeout": 604800,
+      "until_stop": true,
+      "iter_timeout": 3600,
+      "max_iters": 8,
       "hour": 2,
       "minute": 0
     },
@@ -27,7 +31,11 @@
       "allow_ips_file": "/usr/local/etc/secondbrain/allow-dev.ips",
       "network": "loopback",
       "mcp": false,
-      "timeout": 1800,
+      "timeout": 0,
+      "safety_timeout": 172800,
+      "until_stop": true,
+      "iter_timeout": 1800,
+      "max_iters": 4,
       "hour": 2,
       "minute": 30
     }

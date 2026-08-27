@@ -39,6 +39,8 @@ def known_persistence() -> dict:
             "com.dao.secondbrain.overnight-queue",
             "com.dao.secondbrain.activity-watch",
             "com.dao.secondbrain.snitch-keeper",
+            "com.dao.secondbrain.radicale",
+            "com.dao.secondbrain.caldav-sync",
         ],
         "launch_daemons": [
             "com.dao.secondbrain.overnight",

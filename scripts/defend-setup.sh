@@ -32,24 +32,39 @@ emit() { printf 'STEP|%s|%s|%s\n' "$1" "$2" "$3"; }
 
 install_skills() {
   local dest="$HOME/.agents/skills"
-  mkdir -p "$dest" "$VAULT/Agent Skills/cybersecurity"
+  mkdir -p "$dest" "$VAULT/Agent Skills/cybersecurity" "$VAULT/Agent Skills/automation"
   local authored=(
     mac-defend mac-network-guard overnight-sandbox secrets-hygiene data-boundary
     prompt-injection-guard mcp-trust persistence-hygiene vault-exposure agent-hard-limits
+    overnight-ops local-first-models vault-cadence caldav-local autonomous-loop
   )
   local name
   for name in "${authored[@]}"; do
     if [[ -f "$SKILLS_ROOT/$name/SKILL.md" ]]; then
       rm -rf "$dest/$name"
       cp -R "$SKILLS_ROOT/$name" "$dest/$name"
-      ln -sfn "$dest/$name" "$VAULT/Agent Skills/cybersecurity/$name"
     fi
+  done
+  for name in mac-defend mac-network-guard overnight-sandbox secrets-hygiene data-boundary \
+              prompt-injection-guard mcp-trust persistence-hygiene vault-exposure agent-hard-limits; do
+    [[ -d "$dest/$name" ]] && ln -sfn "$dest/$name" "$VAULT/Agent Skills/cybersecurity/$name"
+  done
+  for name in overnight-ops local-first-models vault-cadence caldav-local autonomous-loop; do
+    [[ -d "$dest/$name" ]] && ln -sfn "$dest/$name" "$VAULT/Agent Skills/automation/$name"
   done
   # Already on the machine from setup — pin them next to the Mac-defence set
   # so agents looking under cybersecurity/ actually load them.
   for name in security-review skill-auditor n8n-credentials-and-security-official; do
     if [[ -f "$dest/$name/SKILL.md" ]]; then
       ln -sfn "$dest/$name" "$VAULT/Agent Skills/cybersecurity/$name"
+    fi
+  done
+  for name in thinking-router skill-router planning-with-files agent-self-evaluation \
+              planning-and-task-breakdown sequential-thinking recall-reasoning coding debugging \
+              n8n-error-handling-official n8n-workflow-lifecycle-official n8n-loops-official \
+              n8n-agents-official using-n8n-skills-official using-openrouter-model-selection; do
+    if [[ -f "$dest/$name/SKILL.md" ]]; then
+      ln -sfn "$dest/$name" "$VAULT/Agent Skills/automation/$name"
     fi
   done
   for agent_dir in "$HOME/.cursor/skills" "$HOME/.cline/skills" "$HOME/.roo/skills" "$HOME/.kilocode/skills"; do
@@ -85,6 +100,8 @@ Runs at 02:30 as `secondbrain-dev` in a tighter sandbox (loopback only, no n8n/M
 A note in `queue/` with frontmatter `env: development` is moved to `dev-queue/` before the night job.
 
 Do not put secrets in either queue.
+
+Optional: `Notes/Overnight/standing-mission.md` is copied every night and never marked done. Agents run until `Notes/Overnight/STOP` (menu Stop overnight agents).
 EOF
   fi
   for f in allowlist.json allowlist-dev.json secondbrain-agent.sb secondbrain-dev.sb \
@@ -92,7 +109,8 @@ EOF
     [[ -f "$SANDBOX_SRC/$f" ]] && cp -f "$SANDBOX_SRC/$f" "$SANDBOX_DIR/$f"
   done
   for script in network-guard.py overnight-run.sh scan-secrets.py host-integrity.py \
-                activity-watch.py little-snitch-keeper.sh overnight-queue-sync.sh; do
+                activity-watch.py little-snitch-keeper.sh overnight-queue-sync.sh \
+                overnight-ctl.sh caldav-sync.py caldav-setup.sh caldav_lib.py caldav-book.py; do
     [[ -f "$HERE/$script" ]] && cp -f "$HERE/$script" "$SANDBOX_DIR/$script"
     chmod +x "$SANDBOX_DIR/$script" 2>/dev/null || true
   done

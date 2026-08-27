@@ -4,7 +4,8 @@
 #
 # The app runs this on first launch and parses the STEP| lines below; it is also
 # safe to run by hand. Every step is idempotent: already-installed pieces are
-# detected and skipped.
+# detected and skipped. Downloads resume after a dropped connection (.part files,
+# curl -C -, Hugging Face cache). Re-run setup to finish only what is still missing.
 #
 # Usage:
 #   scripts/bootstrap.sh                 # install everything that's missing
@@ -59,7 +60,8 @@ ensure_desktop_brain_dir() {
     "$DESKTOP_THINKING_DIR/reasoning" \
     "$DESKTOP_THINKING_DIR/evaluation" \
     "$DESKTOP_BRAIN_DIR/Agent Skills/mcp" \
-    "$DESKTOP_BRAIN_DIR/Agent Skills/cybersecurity"
+    "$DESKTOP_BRAIN_DIR/Agent Skills/cybersecurity" \
+    "$DESKTOP_BRAIN_DIR/Agent Skills/automation"
   # Legacy: reasoning/evaluation used to be sibling folders — fold into thinking/.
   rm -rf "$DESKTOP_SKILLS_DIR/reasoning" "$DESKTOP_SKILLS_DIR/evaluation"
   if [[ -d "$LEGACY_DESKTOP_SKILLS" ]]; then
@@ -86,6 +88,66 @@ for candidate in "$BIN_DIR" /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin" 
   [[ -d "$candidate" && ":$PATH:" != *":$candidate:"* ]] && PATH="$candidate:$PATH"
 done
 export PATH
+
+# Network: wait, resume, retry. A dropped connection must not restart GB downloads
+# or hang the installer until the user kills it.
+DOWNLOADS_DIR="$SUPPORT/downloads"
+mkdir -p "$DOWNLOADS_DIR"
+
+net_online() {
+  curl -fsS -m 8 -o /dev/null https://github.com 2>/dev/null \
+    || curl -fsS -m 8 -o /dev/null https://huggingface.co 2>/dev/null
+}
+
+# Wait up to ~5 minutes. Then fail the current fetch so the user can re-run;
+# already-finished steps stay on disk.
+net_wait() {
+  local n=0
+  net_online && return 0
+  echo "  Internet is down — waiting to resume (not starting over)…" >&2
+  while (( n < 30 )); do
+    sleep 10
+    net_online && { echo "  Network is back." >&2; return 0; }
+    n=$((n + 1))
+  done
+  echo "  Still offline after 5 minutes — this step will retry next time you run setup." >&2
+  return 1
+}
+
+# Resume-capable GET. Writes dest only when the transfer finishes.
+# Partial bytes stay in dest.part so the next run continues with -C -.
+net_fetch() {
+  local url="$1" dest="$2"
+  local part="${dest}.part"
+  mkdir -p "$(dirname "$dest")"
+  if [[ -f "$dest" && ! -s "$part" ]]; then
+    return 0
+  fi
+  net_wait || return 1
+  local n=0
+  while (( n < 8 )); do
+    echo "  download (try $((n + 1))/8, resumes if partial) $url" >&2
+    if curl -L --fail -C - \
+        --connect-timeout 20 \
+        --retry 0 \
+        --speed-time 45 --speed-limit 256 \
+        -o "$part" "$url" >&2; then
+      mv -f "$part" "$dest"
+      return 0
+    fi
+    n=$((n + 1))
+    net_wait || true
+    sleep $((n * 4))
+  done
+  return 1
+}
+
+file_min_bytes() {
+  local path="$1" min="$2" size
+  [[ -f "$path" ]] || return 1
+  size="$(stat -f%z "$path" 2>/dev/null || echo 0)"
+  (( size >= min ))
+}
 
 # --- requirements -----------------------------------------------------------
 step_requirements() {
@@ -149,12 +211,19 @@ step_brew() {
 }
 
 brew_ensure() {
-  local formula="$1" binary="$2"
+  local formula="$1" binary="$2" n=0
   have "$binary" && return 0
   installing || return 1
   have brew || return 1
+  net_wait || return 1
   echo "  brew install $formula"
-  brew install "$formula" >&2
+  while (( n < 4 )); do
+    brew install "$formula" >&2 && have "$binary" && return 0
+    n=$((n + 1))
+    echo "  brew install $formula failed (try $((n + 1))/4) — retrying without reinstalling what is already there" >&2
+    net_wait || true
+    sleep $((n * 5))
+  done
   have "$binary"
 }
 
@@ -172,7 +241,14 @@ step_bun() {
   fi
   if ! installing; then fail bun "Bun not installed"; return 1; fi
   emit bun installing "Installing Bun"
-  curl -fsSL https://bun.sh/install | bash >&2
+  net_wait || { fail bun "Offline — Bun will install when you re-run setup"; return 1; }
+  local n=0
+  while (( n < 4 )); do
+    curl -fsSL --connect-timeout 20 --retry 3 --retry-delay 4 https://bun.sh/install | bash >&2 && break
+    n=$((n + 1))
+    net_wait || true
+    sleep $((n * 4))
+  done
   export PATH="$HOME/.bun/bin:$PATH"
   if have bun; then
     ln -sf "$(command -v bun)" "$BIN_DIR/bun"
@@ -266,9 +342,14 @@ pick_model() {
 }
 
 existing_model() {
-  local found
-  found="$(find "$MODELS_DIR" -maxdepth 1 -name 'ggml-*.bin' -print -quit 2>/dev/null)"
-  [[ -n "$found" ]] && basename "$found"
+  local found size
+  while IFS= read -r found; do
+    [[ -n "$found" ]] || continue
+    size="$(stat -f%z "$found" 2>/dev/null || echo 0)"
+    (( size >= 40000000 )) || continue
+    basename "$found"
+    return 0
+  done < <(find "$MODELS_DIR" -maxdepth 1 -name 'ggml-*.bin' ! -name '*.part' -print 2>/dev/null)
 }
 
 step_whisper() {
@@ -300,15 +381,21 @@ step_whisper() {
     return 0
   fi
 
-  if [[ ! -f "$file" ]]; then
+  if [[ ! -f "$file" ]] || ! file_min_bytes "$file" 40000000; then
     if ! installing; then fail whisper "no whisper model downloaded"; return 1; fi
-    emit whisper installing "Downloading the $model model (about 1–3 GB)"
-    curl -L --fail --progress-bar -o "$file" \
-      "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model}.bin" >&2 || {
-        rm -f "$file"
-        fail whisper "Could not download ggml-${model}.bin"
-        return 1
-      }
+    rm -f "$file"
+    emit whisper installing "Downloading the $model model (about 1–3 GB — resumes if interrupted)"
+    if ! net_fetch \
+        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${model}.bin" \
+        "$file"; then
+      fail whisper "Could not download ggml-${model}.bin — re-run setup; the partial file is kept"
+      return 1
+    fi
+    if ! file_min_bytes "$file" 40000000; then
+      mv -f "$file" "${file}.part" 2>/dev/null || rm -f "$file"
+      fail whisper "Download looked incomplete — re-run setup to resume"
+      return 1
+    fi
   fi
 
   if [[ -n "$exe" && -f "$file" ]]; then
@@ -356,10 +443,18 @@ step_tiron() {
     [[ -z "$PY" ]] && find_python
     local py_flag=()
     [[ -n "$PY" ]] && py_flag=(--python "$PY")
-    pipx install "${py_flag[@]}" "git+https://github.com/TrelisResearch/tiron" >&2 || {
+    net_wait || { fail tiron "Offline — Tiron will install when you re-run setup"; return 1; }
+    local n=0
+    while (( n < 4 )); do
+      pipx install "${py_flag[@]}" "git+https://github.com/TrelisResearch/tiron" >&2 && break
+      n=$((n + 1))
+      net_wait || true
+      sleep $((n * 5))
+    done
+    if ! have tiron && [[ ! -x "$HOME/.local/bin/tiron" ]]; then
       fail tiron "pipx could not install Tiron"
       return 1
-    }
+    fi
     venv_py="$(tiron_venv_python)"
   fi
 
@@ -372,12 +467,24 @@ step_tiron() {
   fi
 
   if ! installing; then fail tiron "Tiron models not downloaded"; return 1; fi
-  emit tiron installing "Downloading the Tiron model (about 3 GB) + speaker encoder"
+  emit tiron installing "Downloading the Tiron model (about 3 GB) + speaker encoder — resumes from Hugging Face cache"
+  net_wait || { fail tiron "Offline — Tiron models will finish when you re-run setup"; return 1; }
   "$venv_py" - <<'PY' >&2
+import time
 from huggingface_hub import snapshot_download
 for repo in ("Trelis/tiron", "speechbrain/spkrec-ecapa-voxceleb"):
-    print(f"[tiron] fetching {repo}", flush=True)
-    snapshot_download(repo)
+    for attempt in range(6):
+        print(f"[tiron] fetching {repo} (try {attempt + 1}/6)", flush=True)
+        try:
+            snapshot_download(repo)
+            break
+        except Exception as exc:
+            print(exc, flush=True)
+            if attempt == 5:
+                raise
+            time.sleep(8 * (attempt + 1))
+    else:
+        raise SystemExit(1)
 PY
   if tiron_models_cached "$venv_py"; then
     emit tiron ok "Tiron + models ready (offline)"
@@ -402,7 +509,11 @@ stop_group() {
 
 step_heed() {
   emit heed checking "Looking for heed"
-  if [[ -d "$HEED_DIR/.git" && -d "$HEED_DIR/node_modules" ]]; then
+  # Files on disk are enough. Do not wait for /api/health: create-heed starts a
+  # capture process that triggers Screen Recording TCC, and that permission
+  # only applies after the requesting app (often Terminal) is restarted — so
+  # the installer process will never become healthy.
+  if [[ -f "$HEED_DIR/package.json" && -d "$HEED_DIR/node_modules" ]]; then
     emit heed ok "heed installed at $HEED_DIR"
     return 0
   fi
@@ -413,12 +524,22 @@ step_heed() {
   fi
 
   emit heed installing "Installing heed + Neural Engine models (this is the long one)"
+  echo "If macOS asks for Screen Recording or system audio: click Allow and leave this terminal running. Do not quit it — 2ⁿᵈ Brain asks for those permissions later. Setup continues once the files are on disk. If the network drops, re-run setup — a finished heed folder is not downloaded again." >&2
+  net_wait || { fail heed "Offline — heed will install when you re-run setup"; return 1; }
   # create-heed installs into ./heed, so run it from our support directory.
   set -m
   ( cd "$SUPPORT" && npx --yes create-heed@latest --yes --fast --engine=parakeet >&2 ) &
-  local pid=$! waited=0
+  local pid=$! waited=0 files_at=-1
   while (( waited < 2400 )); do
-    heed_healthy && break
+    if [[ -f "$HEED_DIR/package.json" && -d "$HEED_DIR/node_modules" ]]; then
+      if (( files_at < 0 )); then files_at=$waited; fi
+      heed_healthy && break
+      # Models may still be fetching; after 5 minutes of files-on-disk without
+      # a health answer (typical TCC stall), take the disk install and move on.
+      if (( waited - files_at >= 300 )); then
+        break
+      fi
+    fi
     kill -0 "$pid" 2>/dev/null || break
     sleep 5; waited=$((waited + 5))
   done
@@ -442,7 +563,7 @@ step_ollama() {
   if ! have ollama; then
     if ! installing; then fail ollama "Ollama not installed"; return 1; fi
     emit ollama installing "Installing Ollama"
-    have brew && brew install ollama >&2
+    brew_ensure ollama ollama >/dev/null
   fi
   if ! have ollama; then
     fail ollama "Could not install Ollama"
@@ -461,12 +582,20 @@ step_ollama() {
     return 0
   fi
   if ! installing; then fail ollama "no local model pulled"; return 1; fi
-  emit ollama installing "Pulling $model"
+  emit ollama installing "Pulling $model (resumes if interrupted)"
   (ollama serve >/dev/null 2>&1 &) ; sleep 2
-  if ollama pull "$model" >&2; then
+  net_wait || { fail ollama "Offline — model pull will resume when you re-run setup"; return 1; }
+  local n=0
+  while (( n < 4 )); do
+    ollama pull "$model" >&2 && break
+    n=$((n + 1))
+    net_wait || true
+    sleep $((n * 5))
+  done
+  if ollama list 2>/dev/null | grep -q "^${model%%:*}"; then
     emit ollama ok "Ollama + $model ready"
   else
-    fail ollama "Could not pull $model"
+    fail ollama "Could not pull $model — re-run setup to resume"
   fi
 }
 
@@ -490,13 +619,12 @@ install_omlx_dmg() {
   else
     dmg_url="https://github.com/jundot/omlx/releases/download/${tag}/oMLX-${ver}-macos15-sequoia.dmg"
   fi
-  dmg_path="$(mktemp -t omlx).dmg"
-  emit omlx installing "Downloading oMLX ${tag} from GitHub Releases"
-  if ! curl -fsSL -o "$dmg_path" "$dmg_url" >&2; then
-    rm -f "$dmg_path"
+  dmg_path="$DOWNLOADS_DIR/oMLX-${ver}.dmg"
+  emit omlx installing "Downloading oMLX ${tag} from GitHub Releases (resumes if interrupted)"
+  if ! net_fetch "$dmg_url" "$dmg_path"; then
     return 1
   fi
-  mount_out="$(hdiutil attach "$dmg_path" -nobrowse -quiet 2>&1)" || { rm -f "$dmg_path"; return 1; }
+  mount_out="$(hdiutil attach "$dmg_path" -nobrowse -quiet 2>&1)" || return 1
   mount_dir="$(echo "$mount_out" | tail -1 | sed -E 's/^[^[:space:]]+[[:space:]]+([^[:space:]]+).*/\1/')"
   app_src=""
   for candidate in "$mount_dir"/oMLX.app "$mount_dir"/*.app; do
@@ -506,7 +634,6 @@ install_omlx_dmg() {
   done
   if [[ -z "$app_src" ]]; then
     hdiutil detach "$mount_dir" -quiet 2>/dev/null || true
-    rm -f "$dmg_path"
     return 1
   fi
   rm -rf "/Applications/oMLX.app"
@@ -563,23 +690,35 @@ step_omlx_interpreter() {
     fail omlx_interpreter "git is required"
     return 1
   fi
-  rm -rf "$dir"
-  if git clone --depth 1 https://github.com/fxops-ai/omlx-interpreter.git "$dir" >&2; then
-    (
-      cd "$dir"
-      # Non-interactive: install deps without launching the UI.
-      if [[ -x ./setup.sh ]]; then
-        CI=1 NONINTERACTIVE=1 ./setup.sh >&2 || pip3 install -r requirements.txt >&2 || true
-        command -v npm >/dev/null && npm install --legacy-peer-deps >&2 || true
-      fi
-    )
-    if [[ -d "$dir" ]]; then
-      emit omlx_interpreter ok "oMLX Interpreter at $dir"
-    else
-      fail omlx_interpreter "Clone succeeded but setup looks incomplete"
-    fi
+  net_wait || { fail omlx_interpreter "Offline — clone will finish when you re-run setup"; return 1; }
+  if [[ -d "$dir/.git" ]]; then
+    git -C "$dir" pull --ff-only >&2 || true
   else
+    rm -rf "$dir"
+    local n=0
+    while (( n < 4 )); do
+      git clone --depth 1 https://github.com/fxops-ai/omlx-interpreter.git "$dir" >&2 && break
+      n=$((n + 1))
+      rm -rf "$dir"
+      net_wait || true
+      sleep $((n * 4))
+    done
+  fi
+  if [[ ! -d "$dir" ]]; then
     fail omlx_interpreter "Could not clone https://github.com/fxops-ai/omlx-interpreter"
+    return 1
+  fi
+  (
+    cd "$dir"
+    if [[ -x ./setup.sh ]]; then
+      CI=1 NONINTERACTIVE=1 ./setup.sh >&2 || pip3 install -r requirements.txt >&2 || true
+      command -v npm >/dev/null && npm install --legacy-peer-deps >&2 || true
+    fi
+  )
+  if [[ -d "$dir" ]]; then
+    emit omlx_interpreter ok "oMLX Interpreter at $dir"
+  else
+    fail omlx_interpreter "Clone succeeded but setup looks incomplete"
   fi
 }
 
@@ -1604,6 +1743,7 @@ Open **`~/Desktop/2nd Brain`** in VS Code — this folder lives inside it.
 | `thinking/` | **Start with `thinking-model-router`** — then `frameworks/`, `reasoning/`, `evaluation/` |
 | `mcp/` | MCP server registry — connect multiple n8n instances and other MCP servers |
 | `cybersecurity/` | host: `mac-defend`, `mac-network-guard`, `overnight-sandbox`, `persistence-hygiene`, `vault-exposure`; data: `secrets-hygiene`, `data-boundary`, `prompt-injection-guard`, `mcp-trust`, `agent-hard-limits`; plus `security-review`, `skill-auditor`, `n8n-credentials-and-security-official` |
+| `automation/` | `overnight-ops`, `autonomous-loop`, `caldav-local`, plus thinking/skill routers, planning/eval, n8n lifecycle/loops/agents, OpenRouter selection |
 
 **n8n automations:** enable instance-level MCP in each n8n (Settings → Instance-level MCP),
 add the instance in `mcp/registry.json`, put bearer tokens in `mcp/local.env`, then run
@@ -1762,116 +1902,180 @@ install_agent_skills() {
     emit agent_skills skipped "Node/npx required for skill packs"
     return 0
   fi
+  skill_missing() {
+    local name
+    for name in "$@"; do
+      [[ -f "$HOME/.agents/skills/$name/SKILL.md" ]] || return 0
+    done
+    return 1
+  }
+  run_npx_pack() {
+    net_wait || return 1
+    local n=0
+    while (( n < 4 )); do
+      if "$@"; then return 0; fi
+      n=$((n + 1))
+      net_wait || true
+      sleep $((n * 4))
+    done
+    return 1
+  }
   local agents=(--agent cursor --agent cline --agent roo --agent kilo --agent opencode)
   local npx_web npx_n8n npx_nest npx_think name
 
-  npx_web=(npx --yes skills add xirothedev/skills --global -y --copy --skill nestjs-best-practices)
-  for name in "${NEXTJS_SKILLS[@]}"; do
-    npx_web+=(--skill "$name")
-  done
-  npx_web+=("${agents[@]}")
-  "${npx_web[@]}" >&2 || true
+  if skill_missing nestjs-best-practices "${NEXTJS_SKILLS[@]}"; then
+    npx_web=(npx --yes skills add xirothedev/skills --global -y --copy --skill nestjs-best-practices)
+    for name in "${NEXTJS_SKILLS[@]}"; do
+      npx_web+=(--skill "$name")
+    done
+    npx_web+=("${agents[@]}")
+    run_npx_pack "${npx_web[@]}" >&2 || true
+  fi
 
-  install_xirothedev_nestjs_manual_skills >&2 || true
+  if skill_missing "${XIRO_NESTJS_MANUAL[@]}"; then
+    install_xirothedev_nestjs_manual_skills >&2 || true
+  fi
 
-  npx_nest=(npx --yes skills add affaan-m/ecc --global -y --copy --skill nestjs-patterns)
-  npx_nest+=("${agents[@]}")
-  "${npx_nest[@]}" >&2 || true
+  if skill_missing nestjs-patterns; then
+    npx_nest=(npx --yes skills add affaan-m/ecc --global -y --copy --skill nestjs-patterns)
+    npx_nest+=("${agents[@]}")
+    run_npx_pack "${npx_nest[@]}" >&2 || true
+  fi
 
-  npx_nest=(npx --yes skills add giuseppe-trisciuoglio/developer-kit --global -y --copy \
-    --skill nestjs --skill nestjs-code-review)
-  npx_nest+=("${agents[@]}")
-  "${npx_nest[@]}" >&2 || true
+  if skill_missing nestjs nestjs-code-review; then
+    npx_nest=(npx --yes skills add giuseppe-trisciuoglio/developer-kit --global -y --copy \
+      --skill nestjs --skill nestjs-code-review)
+    npx_nest+=("${agents[@]}")
+    run_npx_pack "${npx_nest[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add tjboudreaux/cc-thinking-skills --global -y --copy --skill '*')
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing thinking-model-router; then
+    npx_think=(npx --yes skills add tjboudreaux/cc-thinking-skills --global -y --copy --skill '*')
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add asgard-ai-platform/skills --global -y --copy --skill ux-design-thinking)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing ux-design-thinking; then
+    npx_think=(npx --yes skills add asgard-ai-platform/skills --global -y --copy --skill ux-design-thinking)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add neurofoo/agent-skills --global -y --copy --skill design)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing design; then
+    npx_think=(npx --yes skills add neurofoo/agent-skills --global -y --copy --skill design)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add sammcj/agentic-coding --global -y --copy \
-    --skill critical-thinking-logical-reasoning)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing critical-thinking-logical-reasoning; then
+    npx_think=(npx --yes skills add sammcj/agentic-coding --global -y --copy \
+      --skill critical-thinking-logical-reasoning)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add k-dense-ai/scientific-agent-skills --global -y --copy \
-    --skill scientific-critical-thinking)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing scientific-critical-thinking; then
+    npx_think=(npx --yes skills add k-dense-ai/scientific-agent-skills --global -y --copy \
+      --skill scientific-critical-thinking)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add jwynia/agent-skills --global -y --copy --skill good-thinking)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing good-thinking; then
+    npx_think=(npx --yes skills add jwynia/agent-skills --global -y --copy --skill good-thinking)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add mattnowdev/thinking-partner --global -y --copy --skill thinking-partner)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing thinking-partner; then
+    npx_think=(npx --yes skills add mattnowdev/thinking-partner --global -y --copy --skill thinking-partner)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add mrgoonie/claudekit-skills --global -y --copy --skill sequential-thinking)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing sequential-thinking; then
+    npx_think=(npx --yes skills add mrgoonie/claudekit-skills --global -y --copy --skill sequential-thinking)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add obra/superpowers-skills --global -y --copy --skill "collision-zone thinking")
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing collision-zone-thinking; then
+    npx_think=(npx --yes skills add obra/superpowers-skills --global -y --copy --skill "collision-zone thinking")
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add othmanadi/planning-with-files --global -y --copy --skill planning-with-files)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing planning-with-files; then
+    npx_think=(npx --yes skills add othmanadi/planning-with-files --global -y --copy --skill planning-with-files)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add addyosmani/agent-skills --global -y --copy --skill planning-and-task-breakdown)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing planning-and-task-breakdown; then
+    npx_think=(npx --yes skills add addyosmani/agent-skills --global -y --copy --skill planning-and-task-breakdown)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add refoundai/lenny-skills --global -y --copy \
-    --skill evaluating-trade-offs --skill high-stakes-decisions \
-    --skill launch-planning --skill planning-cadence --skill defining-product-strategy)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing evaluating-trade-offs high-stakes-decisions launch-planning planning-cadence defining-product-strategy; then
+    npx_think=(npx --yes skills add refoundai/lenny-skills --global -y --copy \
+      --skill evaluating-trade-offs --skill high-stakes-decisions \
+      --skill launch-planning --skill planning-cadence --skill defining-product-strategy)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add neolabhq/context-engineering-kit --global -y --copy --skill thought-based-reasoning)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing thought-based-reasoning; then
+    npx_think=(npx --yes skills add neolabhq/context-engineering-kit --global -y --copy --skill thought-based-reasoning)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add parcadei/continuous-claude-v3 --global -y --copy --skill recall-reasoning)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing recall-reasoning; then
+    npx_think=(npx --yes skills add parcadei/continuous-claude-v3 --global -y --copy --skill recall-reasoning)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add wshobson/agents --global -y --copy --skill evaluation-methodology)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing evaluation-methodology; then
+    npx_think=(npx --yes skills add wshobson/agents --global -y --copy --skill evaluation-methodology)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add affaan-m/ecc --global -y --copy \
-    --skill agent-self-evaluation --skill scholar-evaluation)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing agent-self-evaluation scholar-evaluation; then
+    npx_think=(npx --yes skills add affaan-m/ecc --global -y --copy \
+      --skill agent-self-evaluation --skill scholar-evaluation)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_think=(npx --yes skills add owl-listener/designer-skills --global -y --copy --skill heuristic-evaluation)
-  npx_think+=("${agents[@]}")
-  "${npx_think[@]}" >&2 || true
+  if skill_missing heuristic-evaluation; then
+    npx_think=(npx --yes skills add owl-listener/designer-skills --global -y --copy --skill heuristic-evaluation)
+    npx_think+=("${agents[@]}")
+    run_npx_pack "${npx_think[@]}" >&2 || true
+  fi
 
-  npx_n8n=(npx --yes skills add n8n-io/skills --global -y --copy)
-  for name in "${N8N_SKILLS[@]}"; do
-    npx_n8n+=(--skill "$name")
-  done
-  npx_n8n+=("${agents[@]}")
-  "${npx_n8n[@]}" >&2 || true
+  if skill_missing "${N8N_SKILLS[@]}"; then
+    npx_n8n=(npx --yes skills add n8n-io/skills --global -y --copy)
+    for name in "${N8N_SKILLS[@]}"; do
+      npx_n8n+=(--skill "$name")
+    done
+    npx_n8n+=("${agents[@]}")
+    run_npx_pack "${npx_n8n[@]}" >&2 || true
+  fi
 
   install_openrouter_router_skill >&2 || true
 
-  local npx_or name
-  npx_or=(npx --yes skills add openrouterteam/skills --global -y --copy)
-  for name in openrouter-models openrouter-benchmarks; do
-    npx_or+=(--skill "$name")
-  done
-  npx_or+=("${agents[@]}")
-  "${npx_or[@]}" >&2 || true
+  if skill_missing openrouter-models openrouter-benchmarks; then
+    local npx_or
+    npx_or=(npx --yes skills add openrouterteam/skills --global -y --copy)
+    for name in openrouter-models openrouter-benchmarks; do
+      npx_or+=(--skill "$name")
+    done
+    npx_or+=("${agents[@]}")
+    run_npx_pack "${npx_or[@]}" >&2 || true
+  fi
 
   refresh_openrouter_free_agent_models || true
   sync_agent_skill_dirs
@@ -2409,11 +2613,11 @@ step_brain() {
     if [[ "$arch" == "arm64" ]]; then
       url="https://github.com/devwhodevs/engraph/releases/latest/download/engraph-macos-arm64.tar.gz"
     else
-      # No official Intel macOS build today — API helper may still find one later.
       url=""
     fi
-    if [[ -n "$url" ]] && curl -fsSL "$url" -o "$tmp/engraph.tgz"; then
-      tar -xzf "$tmp/engraph.tgz" -C "$tmp" >&2 || true
+    local tarball="$DOWNLOADS_DIR/engraph-macos-${arch}.tgz"
+    if [[ -n "$url" ]] && net_fetch "$url" "$tarball"; then
+      tar -xzf "$tarball" -C "$tmp" >&2 || true
       bin="$(find "$tmp" -type f -name engraph | head -1)"
       if [[ -n "$bin" ]]; then
         cp "$bin" "$BIN_DIR/engraph"
@@ -2509,7 +2713,22 @@ step_obsidian() {
   return 1
 }
 
-# --- Defence: sandbox user, network allowlist, overnight isolation ----------
+# --- Local CalDAV (Radicale, loopback only) --------------------------------
+step_caldav() {
+  local helper="$SCRIPT_DIR/caldav-setup.sh"
+  if [[ ! -f "$helper" ]]; then
+    emit caldav failed "caldav-setup.sh is missing next to bootstrap.sh"
+    FAILED=$((FAILED + 1))
+    return 1
+  fi
+  local args=()
+  installing || args+=(--check)
+  if bash "$helper" "${args[@]}"; then
+    return 0
+  fi
+  FAILED=$((FAILED + 1))
+  return 1
+}
 step_defend() {
   local helper="$SCRIPT_DIR/defend-setup.sh"
   if [[ ! -f "$helper" ]]; then
@@ -2527,7 +2746,7 @@ step_defend() {
 }
 
 # --- run --------------------------------------------------------------------
-for step in requirements brew node bun python ffmpeg whisper tiron heed omlx omlx_interpreter vscode agent_skills screenpipe tts brain obsidian defend ollama; do
+for step in requirements brew node bun python ffmpeg whisper tiron heed omlx omlx_interpreter vscode agent_skills screenpipe tts brain obsidian caldav defend ollama; do
   wanted "$step" || continue
   "step_$step"
 done
@@ -2537,5 +2756,5 @@ if (( FAILED == 0 )); then
   [[ "$MODE" == "check" ]] && DONE_MSG="All local engines and models are present."
   printf 'DONE|ok|%s\n' "$DONE_MSG"
 else
-  printf 'DONE|incomplete|%d step(s) still need attention.\n' "$FAILED"
+  printf 'DONE|incomplete|%d step(s) still need attention — run setup again; finished pieces are kept.\n' "$FAILED"
 fi
