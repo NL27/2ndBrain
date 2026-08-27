@@ -65,14 +65,25 @@ fi
 # Production writes keepers under work/vault-out/Notes/ (cannot write the Desktop vault).
 # Copy into the vault without --delete so human edits stay.
 VAULT_OUT="$PROD_DROP/work/vault-out/Notes"
+OVERNIGHT_WORK="$PROD_DROP/overnight work"
+VAULT_OVERNIGHT_WORK="$VAULT/Notes/Overnight/overnight work"
 mkdir -p "$PROD_DROP/work/vault-out/Notes/Health" \
   "$PROD_DROP/work/vault-out/Notes/Overnight/ideas" \
+  "$OVERNIGHT_WORK" \
   "$VAULT/Notes/Health" \
-  "$VAULT/Notes/Overnight/ideas"
+  "$VAULT/Notes/Overnight/ideas" \
+  "$VAULT_OVERNIGHT_WORK"
 if [[ -d "$VAULT_OUT" ]]; then
   if command -v rsync >/dev/null; then
     rsync -a "$VAULT_OUT/" "$VAULT/Notes/"
   else
     cp -R "$VAULT_OUT/." "$VAULT/Notes/" 2>/dev/null || true
+  fi
+fi
+if [[ -d "$OVERNIGHT_WORK" ]]; then
+  if command -v rsync >/dev/null; then
+    rsync -a "$OVERNIGHT_WORK/" "$VAULT_OVERNIGHT_WORK/"
+  else
+    cp -R "$OVERNIGHT_WORK/." "$VAULT_OVERNIGHT_WORK/" 2>/dev/null || true
   fi
 fi

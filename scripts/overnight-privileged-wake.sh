@@ -139,6 +139,8 @@ install_daemon com.dao.secondbrain.overnight-dev "$DEV" development 2 30
 # (launchd kills bash; Cline children can keep running).
 pkill -f "cline --cwd ${PROD}/work/" 2>/dev/null || true
 pkill -f "cline --cwd ${DEV}/work/" 2>/dev/null || true
+pkill -f "cline --cwd ${PROD}/overnight work/" 2>/dev/null || true
+pkill -f "cline --cwd ${DEV}/overnight work/" 2>/dev/null || true
 pkill -f 'cline-hub-daemon' 2>/dev/null || true
 rm -f "$PROD/state/current.json"
 rm -rf "$PROD/state/worker.lock" "$PROD/state/worker.pid"

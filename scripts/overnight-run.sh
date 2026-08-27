@@ -60,6 +60,7 @@ EVENTS="$DROP/logs/overnight.events.log"
 TIMINGS="$DROP/logs/timings.jsonl"
 QUEUE="$DROP/queue"
 WORK="$DROP/work"
+OVERNIGHT_WORK="$DROP/overnight work"
 CLINE_DATA="$DROP/state/cline-data"
 CLINE_BIN="${CLINE_BIN:-}"
 TIMEOUT="${OVERNIGHT_BUDGET:-${TIMEOUT_DEFAULT:-0}}"
@@ -68,7 +69,7 @@ MAX_ITERS="${OVERNIGHT_MAX_ITERS:-${MAX_ITERS_DEFAULT:-8}}"
 SAFETY="${OVERNIGHT_SAFETY:-${SAFETY_DEFAULT:-604800}}"
 UNTIL_STOP="${OVERNIGHT_UNTIL_STOP:-${UNTIL_STOP_DEFAULT:-1}}"
 
-mkdir -p "$DROP/logs" "$DROP/state" "$WORK" "$QUEUE"
+mkdir -p "$DROP/logs" "$DROP/state" "$WORK" "$OVERNIGHT_WORK" "$QUEUE"
 : >> "$EVENTS" "$TIMINGS"
 
 # One production worker. WatchPaths + kickstart used to start two Cline slices.
@@ -90,6 +91,7 @@ release_lock() { rm -rf "$LOCKDIR" 2>/dev/null || true; }
 trap 'echo "overnight-run stopping — leaving the queue item in place" >&2; release_lock; exit 143' TERM INT HUP
 trap release_lock EXIT
 pkill -f "cline --cwd ${WORK}/" 2>/dev/null || true
+pkill -f "cline --cwd ${OVERNIGHT_WORK}/" 2>/dev/null || true
 echo "======== $(date -u +%Y-%m-%dT%H:%M:%SZ) overnight-run pid=$$ ========" >&2
 
 json_escape() {
@@ -481,6 +483,79 @@ retire_queue_file() {
   fi
 }
 
+task_slug() {
+  python3 -c '
+import re, sys
+s = re.sub(r"\.(md|txt)$", "", sys.argv[1], flags=re.I)
+s = re.sub(r"[^A-Za-z0-9._-]+", "-", s).strip("-.")
+print(s or "task")
+' "$1"
+}
+
+task_dir_for() {
+  printf '%s/%s\n' "$OVERNIGHT_WORK" "$(task_slug "$1")"
+}
+
+write_overnight_index() {
+  python3 - "$OVERNIGHT_WORK" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+root.mkdir(parents=True, exist_ok=True)
+lines = [
+    "# Overnight work",
+    "",
+    "Each subfolder is one queue job. Every file Cline created for that job is inside it.",
+    "",
+]
+for path in sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith(".")):
+    lines.append(f"- [{path.name}]({path.name}/)")
+lines.append("")
+(root / "README.md").write_text("\n".join(lines), encoding="utf-8")
+PY
+}
+
+# Keepers the job wrote to Shared vault-out (or Notes/ in the task folder)
+# also land in overnight work/<task>/ so review is one place.
+file_task_outputs() {
+  local dir="$1" since="${2:-0}"
+  mkdir -p "$WORK/vault-out/Notes" "$dir"
+  if [[ -d "$dir/vault-out" ]]; then
+    if command -v rsync >/dev/null; then
+      rsync -a "$dir/vault-out/" "$WORK/vault-out/"
+    else
+      cp -R "$dir/vault-out/." "$WORK/vault-out/"
+    fi
+  fi
+  if [[ -d "$dir/Notes" ]]; then
+    if command -v rsync >/dev/null; then
+      rsync -a "$dir/Notes/" "$WORK/vault-out/Notes/"
+    else
+      cp -R "$dir/Notes/." "$WORK/vault-out/Notes/"
+    fi
+  fi
+  python3 - "$WORK/vault-out" "$dir/vault-out" "$since" <<'PY'
+import shutil, sys
+from pathlib import Path
+src, dest, since_s = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+try:
+    since = float(since_s)
+except ValueError:
+    since = 0.0
+if not src.is_dir():
+    raise SystemExit(0)
+for path in src.rglob("*"):
+    if not path.is_file():
+        continue
+    if since and path.stat().st_mtime + 1 < since:
+        continue
+    target = dest / path.relative_to(src)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(path, target)
+PY
+  write_overnight_index
+}
+
 # Live clock for watch: progress.json only — no new stderr line every 5s.
 heartbeat_until() {
   local pid="$1" item="$2" out="$3" part="${4:-1}" started="${5:-}"
@@ -705,8 +780,15 @@ $(cat "$REFINE_SRC")"
   fi
   PREV_TASK="$ITEM"
   write_state runId "$RUN_ID" status running queueItem "$ITEM" pid "$$"
-  mkdir -p "$WORK/$RUN_ID"
-  cd "$WORK/$RUN_ID"
+  TASK_DIR="$(task_dir_for "$ITEM")"
+  mkdir -p "$TASK_DIR"
+  if [[ -f "$QUEUE/$ITEM" ]]; then
+    cp -f "$QUEUE/$ITEM" "$TASK_DIR/_queue-job.md"
+  elif [[ "$ITEM" == "__refine__" && -n "${REFINE_SRC:-}" && -f "$REFINE_SRC" ]]; then
+    cp -f "$REFINE_SRC" "$TASK_DIR/_queue-job.md"
+  fi
+  write_overnight_index
+  cd "$TASK_DIR"
   LAST_SLICE=""
   ITEM_RC=1
   ITER=1
@@ -723,8 +805,13 @@ $(cat "$REFINE_SRC")"
     SLICE_TO=$ITER_TIMEOUT
     if (( SLICE_TO > REMAIN )); then SLICE_TO=$REMAIN; fi
     PROMPT="$(cat <<EOF
-Do the queue job below. Write files in this directory. When done, write eval.json: {"overall": 5, "continue": false}.
-Hard no: sudo, git push, secrets, new MCP, disable SIP.
+Do the queue job below. Write every file in this directory (overnight work/$(task_slug "$ITEM")/). Do not write into other task folders.
+This is slice $ITER of up to $MAX_ITERS on the SAME queue file. Finish as much Done when as you can this slice, then stop and write eval.json:
+{"overall": 1-5, "continue": true or false, "done_when_complete": true or false, "next_slice": "one sentence"}
+- continue true and done_when_complete false if any Done when line is still unmet (the runner will start slice $((ITER + 1)) on this same file)
+- continue false and done_when_complete true ONLY when every Done when line is actually met
+If the job names work/vault-out/..., write those keepers here and copy them to $DROP/work/vault-out/Notes/ so the vault can file them.
+Do not mark the job complete after a first draft. Hard no: sudo, git push, secrets, new MCP, disable SIP.
 Use local Ollama only.
 
 EOF
@@ -743,11 +830,11 @@ EOF
 
     export CLINE_SESSION_BACKEND_MODE="${CLINE_SESSION_BACKEND_MODE:-local}"
     export CLINE_REQUEST_TIMEOUT_MS="${OLLAMA_TIMEOUT_MS:-14400000}"
-    WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" "${CLINE_DATA_ARGS[@]}" \
+    WRAP=( "$CLINE_BIN" --cwd "$TASK_DIR" "${CLINE_DATA_ARGS[@]}" \
       -P ollama -m qwen3.5:4b \
       --timeout "$SLICE_TO" --retries 2 --thinking none --json --auto-approve true "$PROMPT" )
-    CLINE_OUT="$DROP/logs/cline-$RUN_ID.out"
-    CLINE_ERR="$DROP/logs/cline-$RUN_ID.err"
+    CLINE_OUT="$TASK_DIR/cline.out"
+    CLINE_ERR="$TASK_DIR/cline.err"
     for f in "$CLINE_OUT" "$CLINE_ERR"; do
       if [[ -e "$f" && ! -w "$f" ]]; then
         rm -f "$f" 2>/dev/null || true
@@ -755,7 +842,7 @@ EOF
       touch "$f" 2>/dev/null || true
     done
     echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) slice start bin=$CLINE_BIN item=$ITEM backend=$CLINE_SESSION_BACKEND_MODE ===" >> "$CLINE_ERR"
-    announce "→ PART  $ITEM  part $ITER/$MAX_ITERS"
+    announce "→ SLICE  $ITEM  $ITER of up to $MAX_ITERS"
     PART_T0="$(date +%s)"
     while ! ollama_model_resident; do
       if stop_requested; then
@@ -775,9 +862,9 @@ EOF
     set -uo pipefail
     if (( ITEM_RC != 0 )); then
       echo "cline slice rc=$ITEM_RC item=$ITEM bin=$CLINE_BIN" >&2
-      echo "==> last 40 lines of logs/cline-$RUN_ID.err" >&2
+      echo "==> last 40 lines of overnight work/$(task_slug "$ITEM")/cline.err" >&2
       tail -n 40 "$CLINE_ERR" >&2 || true
-      echo "==> last 20 lines of logs/cline-$RUN_ID.out" >&2
+      echo "==> last 20 lines of overnight work/$(task_slug "$ITEM")/cline.out" >&2
       tail -n 20 "$CLINE_OUT" >&2 || true
       python3 - "$CLINE_OUT" <<'PY' >&2 || true
 import json, sys
@@ -802,16 +889,41 @@ for line in errs[-8:]:
 PY
     fi
     log_event iteration runId "$RUN_ID" item "$ITEM" iter "$ITER" rc "$ITEM_RC"
-    CONT="false"
+    CONT="true"
     LAST_SLICE=""
-    if [[ -f "$WORK/$RUN_ID/eval.json" ]]; then
-      CONT="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("true" if d.get("continue") else "false")' "$WORK/$RUN_ID/eval.json" 2>/dev/null || echo false)"
-      LAST_SLICE="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("next_slice") or "")' "$WORK/$RUN_ID/eval.json" 2>/dev/null || true)"
+    DONE_WHEN="false"
+    if [[ -f "$TASK_DIR/eval.json" ]]; then
+      CONT="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("true" if d.get("continue") else "false")' "$TASK_DIR/eval.json" 2>/dev/null || echo true)"
+      DONE_WHEN="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("true" if d.get("done_when_complete") else "false")' "$TASK_DIR/eval.json" 2>/dev/null || echo false)"
+      LAST_SLICE="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("next_slice") or "")' "$TASK_DIR/eval.json" 2>/dev/null || true)"
     fi
-    # Cline sometimes exits 1 after writing eval.json. The mission is done.
-    if (( ITEM_RC != 0 )) && [[ -f "$WORK/$RUN_ID/eval.json" ]]; then
+    # A 4B model often writes continue false after a first draft. Keep slicing
+    # until Done when is actually marked complete or we hit the cap.
+    # Never retire a job after only slice 1 — the old WRAP prompt taught the
+    # model to emit continue false immediately.
+    if [[ "$ITER" -eq 1 && "$ITER" -lt "$MAX_ITERS" ]]; then
+      if [[ "$DONE_WHEN" == "true" || "$CONT" != "true" ]]; then
+        announce "  slice 1 is never the last slice — starting slice 2 on $ITEM"
+      fi
+      DONE_WHEN="false"
+      CONT="true"
+    fi
+    if [[ "$DONE_WHEN" != "true" && "$ITER" -lt "$MAX_ITERS" ]]; then
       if [[ "$CONT" != "true" ]]; then
-        echo "Cline rc=$ITEM_RC but eval.json continue=false — counting as done" >&2
+        announce "  slice $ITER said it was done, but Done when is not complete — starting the next slice on $ITEM"
+      fi
+      CONT="true"
+    fi
+    if [[ "$ITER" -ge "$MAX_ITERS" ]]; then
+      CONT="false"
+    fi
+    # Cline sometimes exits 1 after writing eval.json.
+    if (( ITEM_RC != 0 )); then
+      if [[ "$CONT" == "true" ]]; then
+        echo "Cline rc=$ITEM_RC — keeping $ITEM for the next slice" >&2
+        ITEM_RC=0
+      elif [[ -f "$TASK_DIR/eval.json" ]]; then
+        echo "Cline rc=$ITEM_RC but this was the last slice — counting as done" >&2
         ITEM_RC=0
       fi
     fi
@@ -822,19 +934,25 @@ PY
     PART_SEC=$(( $(date +%s) - PART_T0 ))
     PART_HMS="$(fmt_hms "$PART_SEC")"
     log_timing kind part item "$ITEM" part "$ITER" seconds "$PART_SEC" rc "$ITEM_RC"
-    PART_SUMMARY="${PART_SUMMARY:+$PART_SUMMARY, }part $ITER ${PART_HMS}"
+    PART_SUMMARY="${PART_SUMMARY:+$PART_SUMMARY, }slice $ITER ${PART_HMS}"
+    file_task_outputs "$TASK_DIR" "${TASK_T0:-0}"
     if [[ "$CONT" == "true" && "$ITEM_RC" -eq 0 ]]; then
-      announce "✓ PART  $ITEM  part $ITER/$MAX_ITERS  $PART_HMS"
+      announce "✓ SLICE  $ITEM  $ITER of up to $MAX_ITERS  $PART_HMS  (same task continues)"
       ITER=$((ITER + 1))
       continue
     fi
     if [[ "$ITEM_RC" -eq 0 ]]; then
-      announce "✓ PART  $ITEM  part $ITER/$MAX_ITERS  $PART_HMS  (last part)"
+      announce "✓ SLICE  $ITEM  $ITER of up to $MAX_ITERS  $PART_HMS  (Done when complete or last slice)"
     else
-      announce "✗ PART  $ITEM  part $ITER/$MAX_ITERS  $PART_HMS  rc=$ITEM_RC"
+      announce "✗ SLICE  $ITEM  $ITER of up to $MAX_ITERS  $PART_HMS  rc=$ITEM_RC"
     fi
     break
   done
+
+  file_task_outputs "$TASK_DIR" "${TASK_T0:-0}"
+  if [[ -x "$SCRIPT_DIR/overnight-queue-sync.sh" ]]; then
+    bash "$SCRIPT_DIR/overnight-queue-sync.sh" >/dev/null 2>&1 || true
+  fi
 
   LAST_RC=$ITEM_RC
   TASK_SEC=$(( $(date +%s) - ${TASK_T0:-$(date +%s)} ))
@@ -891,7 +1009,7 @@ PY
   ITEMS_DONE=$((ITEMS_DONE + 1))
   CURRENT_ITEM=""
   STATUS="running"
-  SUMMARY_LINES+=("- \`$ITEM\` ${TASK_HMS} (${PART_SUMMARY:-parts n/a}) rc=$ITEM_RC")
+  SUMMARY_LINES+=("- \`$ITEM\` ${TASK_HMS} (${PART_SUMMARY:-parts n/a}) rc=$ITEM_RC — \`overnight work/$(task_slug "$ITEM")/\`")
 done
 
 if (( ITEMS_DONE == 0 )) && [[ "$LAST_RC" -eq 0 ]]; then
@@ -916,10 +1034,16 @@ SUMMARY="$DROP/work/last-run.md"
   echo "- items: $ITEMS_DONE"
   echo "- status: $([[ $LAST_RC -eq 0 ]] && echo done || echo interrupted)"
   echo "- exit: $LAST_RC"
+  echo "- work: \`overnight work/\` (one subfolder per queue job)"
   echo
   for line in "${SUMMARY_LINES[@]}"; do echo "$line"; done
   echo
-  echo "See \`logs/activity.jsonl\`, \`eval.json\` in the worktree, and \`logs/cline-$RUN_ID.err\`."
+  echo "Open \`/Users/Shared/2nd-Brain-Night/overnight work/\` or vault \`Notes/Overnight/overnight work/\`."
 } > "$SUMMARY"
+mkdir -p "$OVERNIGHT_WORK"
+cp -f "$SUMMARY" "$OVERNIGHT_WORK/last-run.md" 2>/dev/null || true
+if [[ -x "$SCRIPT_DIR/overnight-queue-sync.sh" ]]; then
+  bash "$SCRIPT_DIR/overnight-queue-sync.sh" >/dev/null 2>&1 || true
+fi
 
 exit "$LAST_RC"

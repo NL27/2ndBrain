@@ -28,10 +28,10 @@ allow_agent_append() {
 repair_drop_perms() {
   local drop="$1" group="$2" agent="$3"
   local f
-  mkdir -p "$drop/logs" "$drop/state" "$drop/work" "$drop/queue" \
+  mkdir -p "$drop/logs" "$drop/state" "$drop/work" "$drop/overnight work" "$drop/queue" \
     "$drop/queue/done" "$drop/queue/rejected" "$drop/queue/failed"
-  chgrp "$group" "$drop" "$drop/logs" "$drop/state" "$drop/work" "$drop/queue" 2>/dev/null || true
-  chmod 770 "$drop" "$drop/logs" "$drop/state" "$drop/work" "$drop/queue" \
+  chgrp "$group" "$drop" "$drop/logs" "$drop/state" "$drop/work" "$drop/overnight work" "$drop/queue" 2>/dev/null || true
+  chmod 770 "$drop" "$drop/logs" "$drop/state" "$drop/work" "$drop/overnight work" "$drop/queue" \
     "$drop/queue/done" "$drop/queue/rejected" "$drop/queue/failed" 2>/dev/null || true
   for f in "$drop/logs"/* "$drop/state"/*; do
     [[ -e "$f" ]] || continue
@@ -67,6 +67,8 @@ stop_workers() {
   pkill -f '/overnight-run.sh' 2>/dev/null || true
   pkill -f "cline --cwd ${PROD}/work/" 2>/dev/null || true
   pkill -f "cline --cwd ${DEV}/work/" 2>/dev/null || true
+  pkill -f "cline --cwd ${PROD}/overnight work/" 2>/dev/null || true
+  pkill -f "cline --cwd ${DEV}/overnight work/" 2>/dev/null || true
   rm -rf "$PROD/state/worker.lock" "$DEV/state/worker.lock"
   sleep 1
 }
@@ -78,9 +80,10 @@ worker_stable() {
 }
 
 start_direct() {
-  mkdir -p "$PROD/logs" "$PROD/state" "$PROD/queue" "$PROD/work"
+  mkdir -p "$PROD/logs" "$PROD/state" "$PROD/queue" "$PROD/work" "$PROD/overnight work"
   rm -rf "$PROD/state/worker.lock" "$PROD/state/current.json"
   echo "======== $(date -u +%Y-%m-%dT%H:%M:%SZ) overnight-ctl start (direct, no launchd) ========" >> "$PROD/logs/overnight.stderr.log"
+  : > "$PROD/logs/overnight.events.log"
   echo "Starting overnight as $USER from $HERE/overnight-run.sh (no admin)…" >&2
   export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
   export SECONDBRAIN_ENV=production
@@ -145,17 +148,19 @@ def progress_line():
     kind = d.get("type") or ""
     if kind == "ollama_warmup" or item == "warmup":
         return f"  loading Ollama   {clock}   {ollama}"
-    part_s = f"part {part}/{part_of}" if part_of else f"part {part}"
+    part_s = f"slice {part} of up to {part_of}" if part_of else f"slice {part}"
     return f"  {item}   {part_s}   {clock}   {ollama}"
 
 if events_path.is_file():
     data = events_path.read_bytes()
-    if data:
-        sys.stdout.write(data.decode("utf-8", errors="replace"))
-        if not data.endswith(b"\n"):
-            sys.stdout.write("\n")
+    offset = len(data)
+    # Replay only the last few lines so a late `watch` is not a blank screen,
+    # and so Start does not dump an old session as if it were this run.
+    text = data.decode("utf-8", errors="replace")
+    tail = [ln for ln in text.splitlines() if ln.strip()][-8:]
+    if tail:
+        sys.stdout.write("\n".join(tail) + "\n")
         sys.stdout.flush()
-        offset = len(data)
 
 try:
     while True:
