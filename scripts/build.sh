@@ -48,6 +48,7 @@ cp "$ROOT/scripts/activity-watch.py" "$APP/Contents/Resources/activity-watch.py"
 cp "$ROOT/scripts/little-snitch-keeper.sh" "$APP/Contents/Resources/little-snitch-keeper.sh"
 cp "$ROOT/scripts/overnight-queue-sync.sh" "$APP/Contents/Resources/overnight-queue-sync.sh"
 cp "$ROOT/scripts/overnight-ctl.sh" "$APP/Contents/Resources/overnight-ctl.sh"
+cp "$ROOT/scripts/overnight-privileged-wake.sh" "$APP/Contents/Resources/overnight-privileged-wake.sh"
 cp "$ROOT/scripts/caldav-setup.sh" "$APP/Contents/Resources/caldav-setup.sh"
 cp "$ROOT/scripts/caldav-sync.py" "$APP/Contents/Resources/caldav-sync.py"
 cp "$ROOT/scripts/caldav_lib.py" "$APP/Contents/Resources/caldav_lib.py"
@@ -62,6 +63,7 @@ chmod +x "$APP/Contents/Resources/defend-setup.sh" \
          "$APP/Contents/Resources/little-snitch-keeper.sh" \
          "$APP/Contents/Resources/overnight-queue-sync.sh" \
          "$APP/Contents/Resources/overnight-ctl.sh" \
+         "$APP/Contents/Resources/overnight-privileged-wake.sh" \
          "$APP/Contents/Resources/caldav-setup.sh" \
          "$APP/Contents/Resources/caldav-sync.py" \
          "$APP/Contents/Resources/caldav_lib.py" \

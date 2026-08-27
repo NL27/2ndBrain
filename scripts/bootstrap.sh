@@ -2465,15 +2465,16 @@ step_mcp() {
 }
 
 # Cline CLI is what overnight-run.sh executes (not the VS Code extension).
+# The `cline` npm shim must stay inside the npm package tree so it can find
+# @cline/cli-darwin-arm64. Copying the shim to /usr/local/bin breaks that.
 cline_cli_candidates() {
   local prefix=""
   command -v npm >/dev/null 2>&1 && prefix="$(npm prefix -g 2>/dev/null || true)"
   printf '%s\n' \
-    "$(command -v cline 2>/dev/null || true)" \
-    "$HOME/.local/bin/cline" \
     /opt/homebrew/bin/cline \
-    /usr/local/bin/cline \
-    "${prefix:+$prefix/bin/cline}"
+    "${prefix:+$prefix/bin/cline}" \
+    "$(command -v cline 2>/dev/null || true)" \
+    "$HOME/.local/bin/cline"
 }
 
 cline_cli_src() {
@@ -2484,24 +2485,39 @@ cline_cli_src() {
   return 1
 }
 
+cline_cli_works() {
+  local bin="$1"
+  [[ -x "$bin" ]] || return 1
+  local out
+  out="$("$bin" --version 2>&1)" || return 1
+  [[ "$out" != *"Could not find the Cline CLI binary"* ]]
+}
+
+cline_native_pkg() {
+  case "$(uname -m)" in
+    arm64) printf '%s\n' "@cline/cli-darwin-arm64" ;;
+    *)     printf '%s\n' "@cline/cli-darwin-x64" ;;
+  esac
+}
+
 cline_cli_place() {
   local src dest
   src="$(cline_cli_src)" || return 1
+  src="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$src" 2>/dev/null || printf '%s\n' "$src")"
   mkdir -p "$HOME/.local/bin"
   dest="$HOME/.local/bin/cline"
-  if [[ "$src" != "$dest" ]]; then
-    cp -f "$src" "$dest"
-    chmod 755 "$dest"
-  fi
-  if [[ -d /usr/local/bin && -w /usr/local/bin && "$src" != /usr/local/bin/cline ]]; then
-    cp -f "$src" /usr/local/bin/cline && chmod 755 /usr/local/bin/cline || true
+  ln -sfn "$src" "$dest"
+  if [[ -d /usr/local/bin && -w /usr/local/bin ]]; then
+    ln -sfn "$src" /usr/local/bin/cline || true
   fi
   hash -r 2>/dev/null || true
-  return 0
+  cline_cli_works "$src"
 }
 
 install_cline_cli() {
-  if cline_cli_src >/dev/null; then
+  local src=""
+  src="$(cline_cli_src)" || true
+  if [[ -n "$src" ]] && cline_cli_works "$src"; then
     cline_cli_place || true
     return 0
   fi
@@ -2511,18 +2527,21 @@ install_cline_cli() {
   if ! have npm; then
     return 1
   fi
-  emit vscode installing "Installing Cline CLI for overnight (npm -g cline)"
+  emit vscode installing "Installing Cline CLI + $(cline_native_pkg) for overnight"
   net_wait || return 1
-  local n=0
+  local n=0 pkg
+  pkg="$(cline_native_pkg)"
   while (( n < 4 )); do
-    npm install -g cline >&2 && hash -r 2>/dev/null || true
-    cline_cli_src >/dev/null && break
+    npm install -g cline "$pkg" --include=optional >&2 && hash -r 2>/dev/null || true
+    src="$(cline_cli_src)" || true
+    [[ -n "$src" ]] && cline_cli_works "$src" && break
     n=$((n + 1))
     net_wait || true
     sleep $((n * 4))
   done
   cline_cli_place || true
-  cline_cli_src >/dev/null
+  src="$(cline_cli_src)" || return 1
+  cline_cli_works "$src"
 }
 
 # --- VS Code + Cline + Roo Code + Kilo Code + AutoGit -----------------------

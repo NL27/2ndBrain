@@ -112,7 +112,7 @@ EOF
   done
   for script in network-guard.py overnight-run.sh scan-secrets.py host-integrity.py \
                 activity-watch.py little-snitch-keeper.sh overnight-queue-sync.sh \
-                overnight-ctl.sh caldav-sync.py caldav-setup.sh caldav_lib.py caldav-book.py; do
+                overnight-ctl.sh overnight-privileged-wake.sh caldav-sync.py caldav-setup.sh caldav_lib.py caldav-book.py; do
     [[ -f "$HERE/$script" ]] && cp -f "$HERE/$script" "$SANDBOX_DIR/$script"
     chmod +x "$SANDBOX_DIR/$script" 2>/dev/null || true
   done

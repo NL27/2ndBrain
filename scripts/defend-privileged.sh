@@ -176,30 +176,28 @@ if [[ -x "$FW" ]]; then
   fi
 fi
 
-# Cline CLI for overnight (not the VS Code extension). Prefer a world-readable
-# copy at /usr/local/bin so secondbrain-agent can exec it.
+# Cline CLI for overnight. Do not copy the Node shim — it must stay in the
+# npm package so it can load @cline/cli-darwin-arm64. Symlink the real file.
 install_cline_system() {
   local src="" c
   for c in \
-      "$INTERACTIVE_HOME/.local/bin/cline" \
       /opt/homebrew/bin/cline \
-      /usr/local/bin/cline; do
-    if [[ -x "$c" ]]; then src="$c"; break; fi
+      "$(command -v npm >/dev/null && npm prefix -g 2>/dev/null)/bin/cline" \
+      "$INTERACTIVE_HOME/.local/bin/cline"; do
+    [[ -n "$c" && -x "$c" ]] || continue
+    src="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$c" 2>/dev/null || printf '%s\n' "$c")"
+    [[ -x "$src" ]] && break
+    src=""
   done
-  if [[ -z "$src" ]] && command -v npm >/dev/null; then
-    c="$(npm prefix -g 2>/dev/null || true)/bin/cline"
-    [[ -n "$c" && -x "$c" ]] && src="$c"
-  fi
   [[ -n "$src" ]] || return 0
   mkdir -p /usr/local/bin
-  cp -f "$src" /usr/local/bin/cline
-  chmod 755 /usr/local/bin/cline
+  ln -sfn "$src" /usr/local/bin/cline
+  chmod 755 /usr/local/bin/cline 2>/dev/null || true
   for user in secondbrain-agent secondbrain-dev; do
     [[ -d "/Users/$user" ]] || continue
     mkdir -p "/Users/$user/.local/bin"
-    cp -f "$src" "/Users/$user/.local/bin/cline"
+    ln -sfn "$src" "/Users/$user/.local/bin/cline"
     chown -R "$user:staff" "/Users/$user/.local"
-    chmod 755 "/Users/$user/.local/bin/cline"
   done
 }
 install_cline_system

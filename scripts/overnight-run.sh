@@ -124,8 +124,8 @@ fi
 
 if [[ -z "$CLINE_BIN" ]]; then
   for candidate in \
-      /usr/local/bin/cline \
       /opt/homebrew/bin/cline \
+      /usr/local/bin/cline \
       "/Users/$AGENT_USER/.local/bin/cline"; do
     [[ -x "$candidate" ]] && CLINE_BIN="$candidate" && break
   done
