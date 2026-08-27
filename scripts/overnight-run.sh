@@ -329,9 +329,9 @@ EOF
     PROMPT+=$'\n---\n'"$TASK"
 
     WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" --timeout "$SLICE_TO" --retries 6 --json --auto-approve true "$PROMPT" )
-    if [[ -f "$PROFILE" ]] && command -v sandbox-exec >/dev/null; then
-      WRAP=( sandbox-exec -f "$PROFILE" "${WRAP[@]}" )
-    fi
+    # Do not wrap with sandbox-exec: seatbelt aborted Node (rc 134) on Josh's Air.
+    # Isolation stays: secondbrain-agent user, pf allowlist, deny ACL on the
+    # interactive home, and the Shared drop folder.
     set +e
     "${WRAP[@]}" >> "$DROP/logs/cline-$RUN_ID.out" 2>> "$DROP/logs/cline-$RUN_ID.err"
     ITEM_RC=$?
