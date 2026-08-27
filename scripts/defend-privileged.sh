@@ -167,11 +167,33 @@ if [[ -x "$FW" ]]; then
   fi
 fi
 
-if [[ -x "$INTERACTIVE_HOME/.local/bin/cline" && ! -x /usr/local/bin/cline ]]; then
+# Cline CLI for overnight (not the VS Code extension). Prefer a world-readable
+# copy at /usr/local/bin so secondbrain-agent can exec it.
+install_cline_system() {
+  local src="" c
+  for c in \
+      "$INTERACTIVE_HOME/.local/bin/cline" \
+      /opt/homebrew/bin/cline \
+      /usr/local/bin/cline; do
+    if [[ -x "$c" ]]; then src="$c"; break; fi
+  done
+  if [[ -z "$src" ]] && command -v npm >/dev/null; then
+    c="$(npm prefix -g 2>/dev/null || true)/bin/cline"
+    [[ -n "$c" && -x "$c" ]] && src="$c"
+  fi
+  [[ -n "$src" ]] || return 0
   mkdir -p /usr/local/bin
-  cp -f "$INTERACTIVE_HOME/.local/bin/cline" /usr/local/bin/cline
+  cp -f "$src" /usr/local/bin/cline
   chmod 755 /usr/local/bin/cline
-fi
+  for user in secondbrain-agent secondbrain-dev; do
+    [[ -d "/Users/$user" ]] || continue
+    mkdir -p "/Users/$user/.local/bin"
+    cp -f "$src" "/Users/$user/.local/bin/cline"
+    chown -R "$user:staff" "/Users/$user/.local"
+    chmod 755 "/Users/$user/.local/bin/cline"
+  done
+}
+install_cline_system
 
 cp -f "$HERE/overnight-run.sh" "$SUPPORT_SYS/overnight-run.sh" 2>/dev/null || true
 cp -f "$HERE/little-snitch-keeper.sh" "$SUPPORT_SYS/little-snitch-keeper.sh" 2>/dev/null || true

@@ -287,7 +287,7 @@ extension SetupManager.Step {
         .init(id: "omlx_interpreter", title: "oMLX Interpreter",
               purpose: "Local coding agent that talks to oMLX"),
         .init(id: "vscode", title: "VS Code + Cline + Roo + Kilo",
-              purpose: "AI agents + oMLX/OpenRouter; opens ~/Desktop/2nd Brain in VS Code"),
+              purpose: "AI agents + Cline CLI (overnight) + oMLX/OpenRouter; opens ~/Desktop/2nd Brain in VS Code"),
         .init(id: "agent_skills", title: "Agent skills + MCP registry",
               purpose: "Next.js, NestJS, n8n, OpenRouter model selection & thinking skills on Desktop"),
         .init(id: screenpipeID, title: "Screenpipe (optional)",

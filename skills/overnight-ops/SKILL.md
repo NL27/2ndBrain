@@ -28,6 +28,8 @@ Do not: git push, new MCP, secrets, vault zip.
 
 Production and development run **until you stop them** (menu **Stop overnight agents**, or `Notes/Overnight/STOP`). A 7-day safety cap remains. 02:00 still starts a session; **Start overnight agents** clears STOP and touches `run-now` (LaunchDaemon WatchPaths after defend has been re-run with admin).
 
+Overnight Cline is the **`cline` CLI**, not the VS Code extension. Setup runs `npm install -g cline` and (on admin defend) copies it to `/usr/local/bin/cline` and `/Users/secondbrain-{agent,dev}/.local/bin/cline`. If a night log says `cline is not installed`, re-run **Install missing** then defend.
+
 Overnight Cline uses local Ollama: **`qwen2.5-coder:7b`** (code) and **`qwen3.5:4b`** (notes) on `127.0.0.1:11434`. Do not switch to OpenRouter unless the queue file names a cloud model.
 
 Keep `task_plan.md` / `eval.json` **in the Shared worktree**. Production may use `caldav-local` on loopback (Private blue, Professional red; booking cards are times-only).

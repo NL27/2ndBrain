@@ -2464,6 +2464,67 @@ step_mcp() {
   fi
 }
 
+# Cline CLI is what overnight-run.sh executes (not the VS Code extension).
+cline_cli_candidates() {
+  local prefix=""
+  command -v npm >/dev/null 2>&1 && prefix="$(npm prefix -g 2>/dev/null || true)"
+  printf '%s\n' \
+    "$(command -v cline 2>/dev/null || true)" \
+    "$HOME/.local/bin/cline" \
+    /opt/homebrew/bin/cline \
+    /usr/local/bin/cline \
+    "${prefix:+$prefix/bin/cline}"
+}
+
+cline_cli_src() {
+  local p
+  while IFS= read -r p; do
+    [[ -n "$p" && -x "$p" ]] && printf '%s\n' "$p" && return 0
+  done < <(cline_cli_candidates)
+  return 1
+}
+
+cline_cli_place() {
+  local src dest
+  src="$(cline_cli_src)" || return 1
+  mkdir -p "$HOME/.local/bin"
+  dest="$HOME/.local/bin/cline"
+  if [[ "$src" != "$dest" ]]; then
+    cp -f "$src" "$dest"
+    chmod 755 "$dest"
+  fi
+  if [[ -d /usr/local/bin && -w /usr/local/bin && "$src" != /usr/local/bin/cline ]]; then
+    cp -f "$src" /usr/local/bin/cline && chmod 755 /usr/local/bin/cline || true
+  fi
+  hash -r 2>/dev/null || true
+  return 0
+}
+
+install_cline_cli() {
+  if cline_cli_src >/dev/null; then
+    cline_cli_place || true
+    return 0
+  fi
+  if ! installing; then
+    return 1
+  fi
+  if ! have npm; then
+    return 1
+  fi
+  emit vscode installing "Installing Cline CLI for overnight (npm -g cline)"
+  net_wait || return 1
+  local n=0
+  while (( n < 4 )); do
+    npm install -g cline >&2 && hash -r 2>/dev/null || true
+    cline_cli_src >/dev/null && break
+    n=$((n + 1))
+    net_wait || true
+    sleep $((n * 4))
+  done
+  cline_cli_place || true
+  cline_cli_src >/dev/null
+}
+
 # --- VS Code + Cline + Roo Code + Kilo Code + AutoGit -----------------------
 step_vscode() {
   emit vscode checking "Looking for VS Code + Cline + Roo Code + Kilo Code + AutoGit"
@@ -2506,17 +2567,26 @@ step_vscode() {
   vscode_has "$exts" 'carlocardella\.vscode-autogit' && has_autogit=1
 
   if [[ -n "$code_bin" && "$has_cline" -eq 1 && "$has_roo" -eq 1 && "$has_kilo" -eq 1 && "$has_autogit" -eq 1 ]]; then
+    if ! install_cline_cli; then
+      if installing; then
+        fail vscode "Cline CLI missing — overnight needs /usr/local/bin/cline or /opt/homebrew/bin/cline"
+        return 1
+      fi
+      fail vscode "Need Cline CLI (npm install -g cline) for overnight"
+      return 1
+    fi
     write_vscode_ai_profiles || true
     write_kilo_omlx_config || true
     write_vscode_mcp_config || true
     install_agent_skills || true
     configure_vscode_second_brain || true
-    emit vscode ok "VS Code + Cline + Roo Code + Kilo Code + AutoGit ready (opens ~/Desktop/2nd Brain)"
+    emit vscode ok "VS Code + Cline + Roo Code + Kilo Code + AutoGit + Cline CLI ready (opens ~/Desktop/2nd Brain)"
     return 0
   fi
   if ! installing; then
     if [[ -z "$code_bin" ]]; then fail vscode "VS Code not installed"
     elif [[ "$has_cline" -eq 0 ]]; then fail vscode "Need Cline extension (saoudrizwan.claude-dev)"
+    elif ! cline_cli_src >/dev/null; then fail vscode "Need Cline CLI (overnight worker)"
     elif [[ "$has_roo" -eq 0 ]]; then fail vscode "Need Roo Code extension (RooVeterinaryInc.roo-cline)"
     elif [[ "$has_kilo" -eq 0 ]]; then fail vscode "Need Kilo Code extension (kilocode.kilo-code)"
     else fail vscode "Need AutoGit extension"
@@ -2535,6 +2605,7 @@ step_vscode() {
     code_bin="/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
   fi
   if [[ ! -x "$code_bin" ]]; then
+    install_cline_cli || true
     fail vscode "VS Code installed but the 'code' CLI is missing"
     return 1
   fi
@@ -2544,6 +2615,7 @@ step_vscode() {
   vscode_install_ext RooVeterinaryInc.roo-cline "Roo Code" || true
   vscode_install_ext kilocode.Kilo-Code "Kilo Code" || true
   vscode_install_ext carlocardella.vscode-autogit "AutoGit" || true
+  install_cline_cli || true
   # Primer is helpful but not required for readiness.
   "$code_bin" --install-extension digitarald.primer-vscode --pre-release --force >&2 \
     || "$code_bin" --install-extension digitarald.primer-vscode --force >&2 || true
@@ -2560,8 +2632,9 @@ step_vscode() {
   vscode_has "$exts" 'kilocode\.kilo-code' && has_kilo=1
   vscode_has "$exts" 'carlocardella\.vscode-autogit' && has_autogit=1
 
-  if [[ "$has_cline" -eq 1 && "$has_roo" -eq 1 && "$has_kilo" -eq 1 && "$has_autogit" -eq 1 ]]; then
-    emit vscode ok "VS Code + Cline + Roo Code + Kilo Code + AutoGit ready (opens ~/Desktop/2nd Brain)"
+  if [[ "$has_cline" -eq 1 && "$has_roo" -eq 1 && "$has_kilo" -eq 1 && "$has_autogit" -eq 1 ]] \
+      && cline_cli_src >/dev/null; then
+    emit vscode ok "VS Code + Cline + Roo Code + Kilo Code + AutoGit + Cline CLI ready (opens ~/Desktop/2nd Brain)"
   elif [[ "$has_cline" -eq 1 && "$has_roo" -eq 1 && "$has_kilo" -eq 1 ]]; then
     emit vscode ok "VS Code + Cline + Roo Code + Kilo Code ready (AutoGit incomplete)"
   elif [[ "$has_cline" -eq 1 && "$has_roo" -eq 1 ]]; then
@@ -2570,6 +2643,9 @@ step_vscode() {
     emit vscode ok "VS Code + Cline ready (Roo Code / Kilo Code incomplete)"
   else
     fail vscode "VS Code is installed but Cline could not be added"
+  fi
+  if ! cline_cli_src >/dev/null; then
+    fail vscode "Cline CLI missing — overnight needs npm install -g cline"
   fi
 }
 

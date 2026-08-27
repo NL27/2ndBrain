@@ -22,7 +22,7 @@ Native Swift. No Dock icon, no windows — everything lives in the menu bar.
 | **Multi-speaker meetings** | **Tiron** (Trelis Research) transcribes *and* attributes speakers in a single decoding pass — up to 8 voices, overlapping speech included — and links them across the whole meeting. State of the art for whole-meeting transcription; no separate diarizer. |
 | **Live transcription** | Text appears while people are still talking, via **[heed](https://github.com/isjunrod/heed)** on the Apple Neural Engine (Parakeet + live diarization). 2ⁿᵈ Brain starts the engine itself — nothing to run in a terminal. When you stop, Tiron re-examines the same audio and labels the speakers. (`⌃⌥T`) |
 | **AI agents** | Send clipboard/transcript context to **local** (oMLX / Ollama / LM Studio) or **cloud** (OpenAI / Anthropic) models. |
-| **VS Code stack** | Setup installs **VS Code** with **Cline**, **Roo Code**, **Kilo Code**, and **AutoGit**, seeds **oMLX** local + **OpenRouter** cloud profiles, wires **multi-instance n8n + engraph + screenpipe** MCP via a registry, and installs **Next.js, NestJS & official n8n skills** on the Desktop for all coding agents. |
+| **VS Code stack** | Setup installs **VS Code** with **Cline**, **Roo Code**, **Kilo Code**, **AutoGit**, and the **Cline CLI** overnight uses (`npm install -g cline`), seeds **oMLX** local + **OpenRouter** cloud profiles, wires **multi-instance n8n + engraph + screenpipe** MCP via a registry, and installs **Next.js, NestJS & official n8n skills** on the Desktop for all coding agents. |
 | **Screen memory** | Intentional hotkey capture stays in the menu bar; optional **Screenpipe** adds always-on local screen + audio memory. |
 | **Knowledge vault** | Markdown second brain at `~/SecondBrain` with **engraph** hybrid search / graph MCP for agents. |
 | **Local TTS** | **Piper** neural voices when available; otherwise macOS `say`. |
@@ -89,7 +89,7 @@ downloads every engine and model:
 | Tiron + its checkpoint (~3 GB) | Who said what, in meetings |
 | heed + Neural Engine models | Live transcription with speakers |
 | oMLX + oMLX Interpreter | Local LLM server + coding agent |
-| VS Code + Cline + Roo Code + Kilo Code + AutoGit | Three AI agents + oMLX/OpenRouter profiles; opens **`~/Desktop/2nd Brain`** on launch |
+| VS Code + Cline + Roo Code + Kilo Code + AutoGit + **Cline CLI** | Three AI agents + oMLX/OpenRouter profiles; **`npm install -g cline`** copied to `/usr/local/bin` for overnight; opens **`~/Desktop/2nd Brain`** on launch |
 | Agent skills + MCP registry | Desktop library: `~/Desktop/2nd Brain/Agent Skills/`; OpenRouter under `openrouter/`; thinking under `thinking/`; MCP at `~/Library/Application Support/SecondBrain/mcp/` |
 | Screenpipe *(optional)* | Always-on screen/audio memory (`~/Library/Application Support/SecondBrain/bin/screenpipe-start`) |
 | Piper TTS | Local speech synthesis (falls back to `say`) |
