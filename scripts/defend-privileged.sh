@@ -252,6 +252,20 @@ install_overnight_daemon com.dao.secondbrain.overnight \
 install_overnight_daemon com.dao.secondbrain.overnight-dev \
   secondbrain-dev "$GROUP_DEV" "$DROP_DEV" development 2 30 secondbrain-dev.sb
 
+# Root kickstart actually starts the job. User-level kickstart on a system
+# daemon is ignored, and WatchPaths misses writes that happened before load.
+mkdir -p "$DROP_PROD/logs" "$DROP_PROD/state" "$DROP_DEV/logs" "$DROP_DEV/state"
+if [[ ! -f "$DROP_PROD/STOP" ]]; then
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$DROP_PROD/state/run-now"
+  chown "$INTERACTIVE:$GROUP_PROD" "$DROP_PROD/state/run-now" 2>/dev/null || true
+  launchctl kickstart -k system/com.dao.secondbrain.overnight 2>/dev/null || true
+fi
+if [[ ! -f "$DROP_DEV/STOP" ]]; then
+  date -u +%Y-%m-%dT%H:%M:%SZ > "$DROP_DEV/state/run-now"
+  chown "$INTERACTIVE:$GROUP_DEV" "$DROP_DEV/state/run-now" 2>/dev/null || true
+  launchctl kickstart -k system/com.dao.secondbrain.overnight-dev 2>/dev/null || true
+fi
+
 # Little Snitch demo filter turns off after 3 hours — re-enable (official CLI / menu).
 KEEPER="/Library/LaunchDaemons/com.dao.secondbrain.snitch-keeper.plist"
 cat > "$KEEPER" <<PLIST
