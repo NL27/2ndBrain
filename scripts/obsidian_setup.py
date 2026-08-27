@@ -26,14 +26,27 @@ REGISTRY_URL = (
 # resolves.
 WANTED: list[tuple[str, str]] = [
     ("AI Providers", "ai-providers"),
+    ("Advanced Tables", "table-editor-obsidian"),
+    ("Advanced URI", "obsidian-advanced-uri"),
     ("Calendar", "calendar"),
+    ("Dataview", "dataview"),
+    ("Full Calendar", "obsidian-full-calendar"),
+    ("Homepage", "homepage"),
+    ("Kanban", "obsidian-kanban"),
     ("Keep the Rhythm", "keep-the-rhythm"),
+    ("Linter", "obsidian-linter"),
     ("Local GPT", "local-gpt"),
+    ("Natural Language Dates", "nldates-obsidian"),
     ("Omnisearch", "omnisearch"),
+    ("Outliner", "obsidian-outliner"),
     ("Periodic Notes", "periodic-notes"),
+    ("QuickAdd", "quickadd"),
     ("Readability Score", "readability-score"),
     ("Reading Time", "obsidian-reading-time"),
+    ("Recent Files", "recent-files-obsidian"),
     ("Remaining reading time", "remaining-reading-time"),
+    ("Reminder", "obsidian-reminder-plugin"),
+    ("Remember cursor position", "remember-cursor-position"),
     ("Soundscapes", "soundscapes"),
     ("Tag Wrangler", "tag-wrangler"),
     ("Tasks", "obsidian-tasks-plugin"),
@@ -86,6 +99,11 @@ def resolve(registry: list[dict], name: str, preferred_id: str) -> dict | None:
     by_id = {entry["id"]: entry for entry in registry}
     if preferred_id in by_id:
         return by_id[preferred_id]
+    for alt in {"obsidian-full-calendar": ("obsidian-full-calendar-remastered",)}.get(
+        preferred_id, ()
+    ):
+        if alt in by_id:
+            return by_id[alt]
     wanted = name.casefold().strip()
     for entry in registry:
         if entry.get("name", "").casefold().strip() == wanted:
@@ -104,6 +122,12 @@ def install_plugin(vault: Path, entry: dict) -> tuple[str, str]:
     plugin_id = entry["id"]
     repo = entry["repo"]
     target = vault / ".obsidian" / "plugins" / plugin_id
+    if (target / "main.js").is_file() and (target / "manifest.json").is_file():
+        try:
+            manifest = json.loads((target / "manifest.json").read_text())
+            return manifest.get("id") or plugin_id, manifest.get("version", "?")
+        except (json.JSONDecodeError, OSError):
+            pass
     target.mkdir(parents=True, exist_ok=True)
     base = f"https://github.com/{repo}/releases/latest/download"
 
@@ -268,8 +292,77 @@ def configure(vault: Path, installed: list[str], omlx: str, ollama: str) -> None
     if target := plugin_dir("local-gpt"):
         merge_json(
             target / "data.json",
-            {"defaultProvider": "ollama", "providers": {"ollama": {"url": ollama}}},
+            {
+                "defaultProvider": "ollama",
+                "providers": {
+                    "ollama": {"url": ollama, "model": "qwen3.5:4b"},
+                },
+            },
         )
+
+    # Dataview JS can run code from notes — vault text is untrusted (prompt-injection-guard).
+    if target := plugin_dir("dataview"):
+        merge_json(
+            target / "data.json",
+            {
+                "enableDataviewJs": False,
+                "enableInlineDataviewJs": False,
+                "enableInlineDataview": True,
+                "warnOnEmptyResult": True,
+            },
+        )
+
+    if target := plugin_dir("obsidian-full-calendar"):
+        merge_json(
+            target / "data.json",
+            {
+                "calendarSources": [
+                    {
+                        "type": "local",
+                        "color": "#0A84FF",
+                        "name": "Private",
+                        "directory": "Notes/Calendar/private",
+                    },
+                    {
+                        "type": "local",
+                        "color": "#FF453A",
+                        "name": "Professional",
+                        "directory": "Notes/Calendar/professional",
+                    },
+                    {"type": "dailynote", "color": "#8E8E93", "heading": "Log"},
+                ]
+            },
+        )
+
+    if target := plugin_dir("nldates-obsidian"):
+        merge_json(
+            target / "data.json",
+            {"autosuggestToggleLink": True, "autocompleteTriggerPhrase": "@"},
+        )
+
+    if target := plugin_dir("homepage"):
+        merge_json(
+            target / "data.json",
+            {
+                "openOnStartup": True,
+                "hasRibbonIcon": True,
+                "openMode": "Replace all open notes",
+                "value": "Notes/Dashboard",
+                "kind": "file",
+            },
+        )
+
+    if target := plugin_dir("obsidian-linter"):
+        merge_json(target / "data.json", {"lintOnSave": False, "displayChanged": True})
+
+    if target := plugin_dir("obsidian-reminder-plugin"):
+        merge_json(
+            target / "data.json",
+            {"reminderTime": "09:00", "useSystemNotification": True},
+        )
+
+    if target := plugin_dir("recent-files-obsidian"):
+        merge_json(target / "data.json", {"maxLength": 50, "omitFolders": ["Agent Skills"]})
 
 
 DAILY_TEMPLATE = """---
@@ -305,13 +398,99 @@ Everything the app filed today, by tag: [[#capture]]
 ## Log
 """
 
+OVERNIGHT_TEMPLATE = """---
+env: production
+tags: [overnight]
+---
+# <% tp.file.title %>
 
-def write_templates(vault: Path) -> None:
-    path = vault / "Templates" / "Daily.md"
+Goal in one sentence.
+
+Done when:
+
+Do not: git push, new MCP, secrets, vault zip.
+"""
+
+EVENT_PRIVATE = """---
+title: <% tp.file.title %>
+allDay: false
+date: <% tp.date.now("YYYY-MM-DD") %>
+startTime: 18:00
+endTime: 19:00
+type: single
+calendar: private
+tags: [calendar, private]
+---
+Location:
+
+Who (only if they may join):
+"""
+
+EVENT_PROFESSIONAL = """---
+title: <% tp.file.title %>
+allDay: false
+date: <% tp.date.now("YYYY-MM-DD") %>
+startTime: 09:00
+endTime: 09:30
+type: single
+calendar: professional
+tags: [calendar, work]
+---
+Busy block for work. Title stays on this Mac.
+"""
+
+DASHBOARD = """---
+tags: [dashboard]
+---
+# Dashboard
+
+Local graph. Queries do not use Dataview JS.
+
+## Due
+
+```tasks
+not done
+due before in 7 days
+sort by due
+```
+
+## Overnight queue
+
+```dataview
+LIST FROM "Notes/Overnight/queue"
+```
+
+## Standing mission
+
+[[Notes/Overnight/standing-mission]]
+
+## Last night
+
+![[Notes/Overnight/last-run]]
+
+## Calendars
+
+- Private (blue): `Notes/Calendar/private`
+- Professional (red): `Notes/Calendar/professional`
+- Apple Calendar talks to local CalDAV — see [[Notes/Calendar/CalDAV]]
+"""
+
+
+def write_if_missing(path: Path, body: str) -> None:
     if path.is_file():
         return
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(DAILY_TEMPLATE, encoding="utf-8")
+    path.write_text(body, encoding="utf-8")
+
+
+def write_templates(vault: Path) -> None:
+    write_if_missing(vault / "Templates" / "Daily.md", DAILY_TEMPLATE)
+    write_if_missing(vault / "Templates" / "Overnight job.md", OVERNIGHT_TEMPLATE)
+    write_if_missing(vault / "Templates" / "Event private.md", EVENT_PRIVATE)
+    write_if_missing(vault / "Templates" / "Event professional.md", EVENT_PROFESSIONAL)
+    write_if_missing(vault / "Notes" / "Dashboard.md", DASHBOARD)
+    (vault / "Notes" / "Calendar" / "private").mkdir(parents=True, exist_ok=True)
+    (vault / "Notes" / "Calendar" / "professional").mkdir(parents=True, exist_ok=True)
 
 
 # --- entry point -----------------------------------------------------------

@@ -7,6 +7,15 @@ description: Prefer on-Mac models (oMLX, Ollama) for overnight and vault work; u
 
 This Life OS is local-first. Cloud is a fallback, not the default for night jobs.
 
+Pinned **Ollama** models (pulled by setup when Local AI is on):
+
+| Model | Use |
+|-------|-----|
+| `qwen3.5:4b` | Notes, daily, Ask AI, overnight planning |
+| `qwen2.5-coder:7b` | Coding, n8n, overnight implementation |
+
+Cline / Roo profiles: **Ollama Qwen 3.5 4B** and **Ollama Qwen Coder 7B** (`http://127.0.0.1:11434`). Obsidian Local GPT uses the same Ollama server and lists whatever is pulled.
+
 | Job | Where |
 |-----|--------|
 | Overnight **development** | Loopback only — oMLX `:8000` / Ollama `:11434` |

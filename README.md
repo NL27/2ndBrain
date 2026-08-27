@@ -66,7 +66,7 @@ scripts/install.sh
 # Or get the waiting over with now: app + every engine + every model
 scripts/install.sh --with-engines
 
-# Include a local LLM (Ollama) so the AI features work offline too
+# Include local Ollama: Qwen 3.5 4B + Qwen 2.5 Coder 7B
 scripts/install.sh --with-engines --with-ollama
 
 # Just one piece (ids: requirements brew node python ffmpeg whisper tiron heed ollama)
@@ -94,7 +94,7 @@ downloads every engine and model:
 | Screenpipe *(optional)* | Always-on screen/audio memory (`~/Library/Application Support/SecondBrain/bin/screenpipe-start`) |
 | Piper TTS | Local speech synthesis (falls back to `say`) |
 | `~/SecondBrain` vault + engraph | Searchable knowledge graph for agents |
-| Ollama + a model *(optional)* | Extra local LLM runtime alongside oMLX |
+| Ollama + Qwen *(optional, on by default in setup)* | `qwen3.5:4b` (notes) + `qwen2.5-coder:7b` (code) on `127.0.0.1:11434` |
 
 It's one long download — several GB — and it only happens once. Each step is
 checked before it runs, so closing the window and finishing later picks up where
@@ -114,7 +114,10 @@ says how many pieces are still missing. The same work is available as a script:
 ```bash
 scripts/bootstrap.sh --check     # what's installed, changes nothing
 scripts/bootstrap.sh             # install whatever is missing (resumes after a drop)
+scripts/bootstrap.sh --only ollama   # just Ollama + the two Qwen models
 ```
+
+On a **second Mac** that already ran setup: `git pull` in this repo, then menu **Local Engines & Models…** → leave **Ollama** on → **Install missing**. That pulls `qwen3.5:4b` (~3.4 GB) and `qwen2.5-coder:7b` (~4.7 GB), wires Cline/Roo/Obsidian/Ask AI, and (on the next admin defend run) points overnight Cline at those models. Keep the Mac logged in so Ollama stays up at 02:00.
 
 ### Grant permissions on first use
 
@@ -381,7 +384,7 @@ git reset --hard v0.1.0
 Menu → **AI**:
 
 - **Provider**: Local (OpenAI-compatible) / OpenAI / Anthropic
-- **Set Base URL / Model**: e.g. `http://localhost:11434/v1` + `llama3.1` for Ollama
+- **Set Base URL / Model**: `http://localhost:11434/v1` + `qwen3.5:4b` (notes) or `qwen2.5-coder:7b` (code)
 - **Set API Key**: stored in the macOS Keychain (cloud providers only)
 - **Ask AI about Clipboard**: sends your prompt with the latest clipboard text as context
 

@@ -28,6 +28,8 @@ Do not: git push, new MCP, secrets, vault zip.
 
 Production and development run **until you stop them** (menu **Stop overnight agents**, or `Notes/Overnight/STOP`). A 7-day safety cap remains. 02:00 still starts a session; **Start overnight agents** clears STOP and touches `run-now` (LaunchDaemon WatchPaths after defend has been re-run with admin).
 
+Overnight Cline uses local Ollama: **`qwen2.5-coder:7b`** (code) and **`qwen3.5:4b`** (notes) on `127.0.0.1:11434`. Do not switch to OpenRouter unless the queue file names a cloud model.
+
 Keep `task_plan.md` / `eval.json` **in the Shared worktree**. Production may use `caldav-local` on loopback (Private blue, Professional red; booking cards are times-only).
 
 When one mission cannot be improved, the runner takes the next queue file. If none remain, it refines the last finished mission until you stop.

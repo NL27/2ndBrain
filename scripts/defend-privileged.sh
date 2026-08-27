@@ -180,6 +180,42 @@ cp -f "$HERE/caldav-sync.py" "$HERE/caldav_lib.py" "$HERE/caldav-book.py" "$HERE
 chmod 755 "$SUPPORT_SYS/overnight-run.sh" "$SUPPORT_SYS/little-snitch-keeper.sh" \
   "$SUPPORT_SYS/caldav-sync.py" "$SUPPORT_SYS/caldav-book.py" "$SUPPORT_SYS/overnight-ctl.sh" 2>/dev/null || true
 
+# Overnight Cline talks to the interactive user's Ollama on 127.0.0.1:11434.
+# Seed local-only providers (no OpenRouter keys) so night jobs pick Qwen.
+seed_agent_ollama_providers() {
+  local user dest
+  for user in secondbrain-agent secondbrain-dev; do
+    [[ -d "/Users/$user" ]] || continue
+    dest="/Users/$user/.cline/data/settings"
+    mkdir -p "$dest"
+    python3 - "$dest/providers.json" <<'PY'
+import json, sys
+from datetime import datetime, timezone
+path = sys.argv[1]
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+def entry(provider, model, base):
+    return {
+        "settings": {"provider": provider, "model": model, "baseUrl": base},
+        "updatedAt": now,
+        "tokenSource": "manual",
+    }
+doc = {
+    "version": 1,
+    "lastUsedProvider": "ollama-qwen-coder",
+    "providers": {
+        "omlx-local": entry("openai-compatible", "qwen3-coder-next", "http://127.0.0.1:8000/v1"),
+        "ollama-qwen35": entry("ollama", "qwen3.5:4b", "http://127.0.0.1:11434"),
+        "ollama-qwen-coder": entry("ollama", "qwen2.5-coder:7b", "http://127.0.0.1:11434"),
+    },
+}
+open(path, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+PY
+    chown -R "$user:staff" "/Users/$user/.cline"
+    chmod -R go-rwx "/Users/$user/.cline"
+  done
+}
+seed_agent_ollama_providers
+
 # CalDAV password for production overnight (loopback). Not for secondbrain-dev.
 CREDS_FILE="${INTERACTIVE_HOME}/Library/Application Support/SecondBrain/radicale/credentials.env"
 if [[ -f "$CREDS_FILE" ]]; then

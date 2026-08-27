@@ -274,12 +274,12 @@ extension SetupManager.Step {
         .init(id: "brain", title: "Knowledge vault + engraph",
               purpose: "Markdown second brain with graph search MCP"),
         .init(id: "obsidian", title: "Obsidian + vault plugins",
-              purpose: "Graph view over the vault: calendar, tasks, search, local AI"),
+              purpose: "Graph view over the vault: calendar, tasks, search, local AI, dashboards"),
         .init(id: "caldav", title: "Local CalDAV calendar",
               purpose: "Radicale on 127.0.0.1 — Apple Calendar, vault task sync, no Google"),
         .init(id: "defend", title: "Sandbox user + network guard",
               purpose: "Prod + dev overnight users, activity watch, Little Snitch 3h filter keeper"),
         .init(id: ollamaID, title: "Ollama (optional)",
-              purpose: "Extra local LLM runtime alongside oMLX")
+              purpose: "Qwen 3.5 4B (notes) + Qwen 2.5 Coder 7B (code) on this Mac")
     ]
 }

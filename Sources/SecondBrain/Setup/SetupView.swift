@@ -163,7 +163,7 @@ struct SetupView: View {
                         Toggle("", isOn: $manager.includeLocalAI)
                             .toggleStyle(.switch).controlSize(.mini)
                             .disabled(manager.isBusy)
-                            .help("Also install Ollama + a local LLM")
+                            .help("Also install Ollama + Qwen 3.5 4B and Qwen 2.5 Coder 7B (~8 GB)")
                     }
                 }
                 .padding(.horizontal, 16).padding(.vertical, 7)

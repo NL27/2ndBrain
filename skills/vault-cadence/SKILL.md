@@ -15,6 +15,9 @@ The vault is `~/Desktop/2nd Brain`. Obsidian is the graph; VS Code is the folder
 | Lasting note | `Notes/` with tags |
 | Day log | `Daily/YYYY-MM-DD.md` (append a short bullet, do not paste logs) |
 | Night result | `Notes/Overnight/last-run.md` — already written by the runner |
+| Dashboard | `Notes/Dashboard.md` (Dataview + Tasks; no Dataview JS) |
+| Private event note | `Notes/Calendar/private/` (blue in Full Calendar) |
+| Work event note | `Notes/Calendar/professional/` (red; work sees Busy only on CalDAV) |
 | Security | `Notes/Security/` — kind + path only |
 
 ## Rules

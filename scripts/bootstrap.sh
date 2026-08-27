@@ -11,7 +11,7 @@
 #   scripts/bootstrap.sh                 # install everything that's missing
 #   scripts/bootstrap.sh --check         # report status only, install nothing
 #   scripts/bootstrap.sh --only tiron    # run a subset (comma-separated ids)
-#   scripts/bootstrap.sh --with-ollama   # also install Ollama + a local LLM
+#   scripts/bootstrap.sh --with-ollama   # Ollama + qwen3.5:4b + qwen2.5-coder:7b
 #   scripts/bootstrap.sh --model small.en
 #
 # Machine-readable progress, one line per state change:
@@ -554,12 +554,49 @@ step_heed() {
 }
 
 # --- ollama (optional, for local AI notes/answers) -----------------------
+# Pinned local models used by Obsidian Local GPT, the app, and Cline/Roo:
+#   qwen3.5:4b          — general / notes
+#   qwen2.5-coder:7b    — coding / overnight
+OLLAMA_MODELS=(qwen3.5:4b qwen2.5-coder:7b)
+
+ollama_has() {
+  ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -Fxq "$1"
+}
+
+ollama_ensure_running() {
+  have ollama || return 1
+  curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && return 0
+  (ollama serve >/dev/null 2>&1 &)
+  local n=0
+  while (( n < 20 )); do
+    curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && return 0
+    sleep 0.5
+    n=$((n + 1))
+  done
+  return 1
+}
+
+ollama_pull_one() {
+  local model="$1" n=0
+  ollama_has "$model" && return 0
+  emit ollama installing "Pulling $model (resumes if interrupted)"
+  net_wait || return 1
+  while (( n < 4 )); do
+    ollama pull "$model" >&2 && ollama_has "$model" && return 0
+    n=$((n + 1))
+    net_wait || true
+    sleep $((n * 5))
+  done
+  return 1
+}
+
 step_ollama() {
-  if (( WITH_OLLAMA == 0 )); then
+  # --only ollama still pulls even without --with-ollama.
+  if (( WITH_OLLAMA == 0 )) && [[ -z "$ONLY" ]]; then
     emit ollama skipped "Skipped (local AI model not requested)"
     return 0
   fi
-  emit ollama checking "Looking for Ollama"
+  emit ollama checking "Looking for Ollama + Qwen models"
   if ! have ollama; then
     if ! installing; then fail ollama "Ollama not installed"; return 1; fi
     emit ollama installing "Installing Ollama"
@@ -569,34 +606,23 @@ step_ollama() {
     fail ollama "Could not install Ollama"
     return 1
   fi
+  # Homebrew's own service (homebrew.mxcl.ollama), not a 2nd Brain LaunchAgent.
+  brew services start ollama >/dev/null 2>&1 || true
 
-  local mem_gb model
-  mem_gb=$(( $(sysctl -n hw.memsize) / 1073741824 ))
-  if   (( mem_gb >= 32 )); then model="llama3.1:8b"
-  elif (( mem_gb >= 16 )); then model="llama3.2:3b"
-  else                          model="llama3.2:1b"
-  fi
-
-  if ollama list 2>/dev/null | grep -q "^${model%%:*}"; then
-    emit ollama ok "Ollama + $model ready"
+  local missing=0 model
+  for model in "${OLLAMA_MODELS[@]}"; do
+    ollama_has "$model" || missing=1
+  done
+  if (( missing == 0 )); then
+    emit ollama ok "Ollama + ${OLLAMA_MODELS[*]} ready"
     return 0
   fi
-  if ! installing; then fail ollama "no local model pulled"; return 1; fi
-  emit ollama installing "Pulling $model (resumes if interrupted)"
-  (ollama serve >/dev/null 2>&1 &) ; sleep 2
-  net_wait || { fail ollama "Offline — model pull will resume when you re-run setup"; return 1; }
-  local n=0
-  while (( n < 4 )); do
-    ollama pull "$model" >&2 && break
-    n=$((n + 1))
-    net_wait || true
-    sleep $((n * 5))
+  if ! installing; then fail ollama "Qwen models not pulled yet"; return 1; fi
+  ollama_ensure_running || { fail ollama "Ollama is installed but not answering on :11434"; return 1; }
+  for model in "${OLLAMA_MODELS[@]}"; do
+    ollama_pull_one "$model" || { fail ollama "Could not pull $model — re-run setup to resume"; return 1; }
   done
-  if ollama list 2>/dev/null | grep -q "^${model%%:*}"; then
-    emit ollama ok "Ollama + $model ready"
-  else
-    fail ollama "Could not pull $model — re-run setup to resume"
-  fi
+  emit ollama ok "Ollama + ${OLLAMA_MODELS[*]} ready"
 }
 
 # --- oMLX (local LLM inference on Apple Silicon) ---------------------------
@@ -942,7 +968,7 @@ For cloud inference via OpenRouter:
 2. **First attempt — always a pinned free model** (default: **`poolside/laguna-s-2.1:free`**). All pinned models are preconfigured in Cline, Roo & Kilo — see **`free-tool-agent-models.md`**.
 3. **If the user dislikes the output:** switch to **OpenRouter Auto** (`openrouter/auto`) and **rerun the same task** (same instructions/context). Say you are retrying on Auto.
 4. **Do not use Auto first** unless the user explicitly requests it.
-5. **Local option:** **oMLX Local** for on-device inference.
+5. **Local option:** **Ollama Qwen Coder 7B** (`qwen2.5-coder:7b`) or **Ollama Qwen 3.5 4B** (`qwen3.5:4b`) on `127.0.0.1:11434`, or **oMLX Local** on `:8000`.
 
 ## Skill layout
 
@@ -1053,6 +1079,9 @@ def roo_profile(api_provider, model_id, base_url=None, api_key=None):
             p["openAiBaseUrl"] = base_url
         if api_key:
             p["openAiApiKey"] = api_key
+    elif api_provider == "ollama":
+        p["ollamaModelId"] = model_id
+        p["ollamaBaseUrl"] = base_url or "http://127.0.0.1:11434"
     return p
 
 # --- Cline -----------------------------------------------------------------
@@ -1075,6 +1104,14 @@ seed = {
         "openai-compatible", "qwen3-coder-next",
         base_url="http://127.0.0.1:8000/v1", api_key="omlx",
     ),
+    "ollama-qwen35": cline_entry(
+        "ollama", "qwen3.5:4b",
+        base_url="http://127.0.0.1:11434",
+    ),
+    "ollama-qwen-coder": cline_entry(
+        "ollama", "qwen2.5-coder:7b",
+        base_url="http://127.0.0.1:11434",
+    ),
     "openrouter-auto": cline_entry("openrouter", "openrouter/auto", api_key=openrouter_key or None),
     "openrouter-free-router": cline_entry("openrouter", "openrouter/free", api_key=openrouter_key or None),
 }
@@ -1083,10 +1120,12 @@ for i, model_id in enumerate(free_models):
         "openrouter", model_id, api_key=openrouter_key or None,
     )
 for name, entry in seed.items():
-    providers[name] = entry  # always refresh pinned free profiles
+    providers[name] = entry  # always refresh pinned profiles
 existing["providers"] = providers
 primary_cline = cline_key(PRIMARY, 0)
-existing["lastUsedProvider"] = primary_cline
+# Keep the human's last Cline pick. New machines default to local Qwen 3.5.
+if not existing.get("lastUsedProvider"):
+    existing["lastUsedProvider"] = "ollama-qwen35"
 existing["_secondBrainOpenRouterDefault"] = PRIMARY
 existing["_secondBrainOpenRouterPrimaryCline"] = primary_cline
 with open(cline_path, "w", encoding="utf-8") as f:
@@ -1102,6 +1141,14 @@ api_configs = {
     "oMLX Local": roo_profile(
         "openai", "qwen3-coder-next",
         base_url="http://127.0.0.1:8000/v1", api_key="omlx",
+    ),
+    "Ollama Qwen 3.5 4B": roo_profile(
+        "ollama", "qwen3.5:4b",
+        base_url="http://127.0.0.1:11434",
+    ),
+    "Ollama Qwen Coder 7B": roo_profile(
+        "ollama", "qwen2.5-coder:7b",
+        base_url="http://127.0.0.1:11434",
     ),
     "OpenRouter Auto (retry)": roo_profile(
         "openrouter", "openrouter/auto", api_key=openrouter_key or None,

@@ -55,8 +55,8 @@ final class Settings {
             Keys.heedBaseURL: "http://localhost:5170",
             Keys.refineLiveWithTiron: true,
             Keys.aiProvider: AIProvider.localOpenAICompatible.rawValue,
-            Keys.aiBaseURL: "http://localhost:8000/v1",
-            Keys.aiModel: "llama3.2",
+            Keys.aiBaseURL: "http://localhost:11434/v1",
+            Keys.aiModel: "qwen3.5:4b",
         ])
     }
 
@@ -213,12 +213,12 @@ final class Settings {
     }
 
     var aiBaseURL: String {
-        get { defaults.string(forKey: Keys.aiBaseURL) ?? "http://localhost:8000/v1" }
+        get { defaults.string(forKey: Keys.aiBaseURL) ?? "http://localhost:11434/v1" }
         set { defaults.set(newValue, forKey: Keys.aiBaseURL) }
     }
 
     var aiModel: String {
-        get { defaults.string(forKey: Keys.aiModel) ?? "llama3.2" }
+        get { defaults.string(forKey: Keys.aiModel) ?? "qwen3.5:4b" }
         set { defaults.set(newValue, forKey: Keys.aiModel) }
     }
 
