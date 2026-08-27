@@ -77,23 +77,27 @@ system_runner_stale() {
 }
 
 kickstart_as_admin() {
-  echo "Asking macOS to install overnight-run.sh, fix log ACLs, and kickstart (admin password)…" >&2
+  echo "Asking macOS to install overnight-run.sh, fix the agent home, and kickstart (admin password)…" >&2
   osascript <<OSA >/dev/null
-do shell script "cp '$HERE/overnight-run.sh' '$SYS_RUNNER'; chmod 755 '$SYS_RUNNER'; chown -R $USER:secondbrain /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 770 /Users/Shared/2nd-Brain-Night /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod g+rw /Users/Shared/2nd-Brain-Night/logs/*.jsonl 2>/dev/null; true; chmod +a 'user:secondbrain-agent allow read,write,append' /Users/Shared/2nd-Brain-Night/logs/activity.jsonl 2>/dev/null; true; : > /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; : > /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log; chown secondbrain-agent:secondbrain /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log /Users/Shared/2nd-Brain-Night/logs/activity.jsonl; chmod 664 /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log /Users/Shared/2nd-Brain-Night/logs/activity.jsonl; chown -R $USER:secondbrain-dev /Users/Shared/2nd-Brain-Dev/logs /Users/Shared/2nd-Brain-Dev/state 2>/dev/null; true; launchctl kickstart -k system/com.dao.secondbrain.overnight; launchctl kickstart -k system/com.dao.secondbrain.overnight-dev" with administrator privileges
+do shell script "cp '$HERE/overnight-run.sh' '$SYS_RUNNER'; chmod 755 '$SYS_RUNNER'; /usr/sbin/createhomedir -c -u secondbrain-agent >/dev/null 2>&1; true; /usr/sbin/createhomedir -c -u secondbrain-dev >/dev/null 2>&1; true; mkdir -p /Users/secondbrain-agent /Users/secondbrain-dev; chown -R secondbrain-agent:staff /Users/secondbrain-agent; chown -R secondbrain-dev:staff /Users/secondbrain-dev; chmod 700 /Users/secondbrain-agent /Users/secondbrain-dev; chown -R $USER:secondbrain /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 770 /Users/Shared/2nd-Brain-Night /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod g+rw /Users/Shared/2nd-Brain-Night/logs/*.jsonl 2>/dev/null; true; : > /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; : > /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log; chown secondbrain-agent:secondbrain /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log /Users/Shared/2nd-Brain-Night/logs/activity.jsonl; chmod 664 /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log /Users/Shared/2nd-Brain-Night/logs/activity.jsonl; launchctl kickstart -k system/com.dao.secondbrain.overnight; launchctl kickstart -k system/com.dao.secondbrain.overnight-dev" with administrator privileges
 OSA
 }
 
 wake_overnight() {
+  local did_admin=0
   touch_run_now
   if system_runner_stale; then
-    echo "System overnight-run.sh is stale (still the 04:06 copy until admin installs this repo's script)." >&2
+    echo "System overnight-run.sh is stale — admin password to install this repo's script." >&2
     kickstart_as_admin || true
+    did_admin=1
   else
     launchctl kickstart -k system/com.dao.secondbrain.overnight 2>/dev/null || true
     launchctl kickstart -k system/com.dao.secondbrain.overnight-dev 2>/dev/null || true
   fi
   worker_stable && return 0
-  kickstart_as_admin || true
+  if (( did_admin == 0 )); then
+    kickstart_as_admin || true
+  fi
   worker_stable
 }
 
@@ -124,8 +128,8 @@ report_worker() {
   else
     echo "STALE: system copy does not match $HERE/overnight-run.sh — approve the admin dialog"
   fi
-  echo "==> activity.jsonl ACL"
-  ls -le "$PROD/logs/activity.jsonl" 2>/dev/null || true
+  echo "==> /Users/secondbrain-agent"
+  ls -ld /Users/secondbrain-agent 2>/dev/null || echo "(no home directory)"
 }
 
 case "$CMD" in

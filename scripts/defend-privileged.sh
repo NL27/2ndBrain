@@ -58,9 +58,10 @@ ensure_user() {
   dseditgroup -o edit -n /Local/Default -a "$user" -t user "$group" 2>/dev/null || true
   dseditgroup -o edit -n /Local/Default -d "$user" -t user admin 2>/dev/null || true
   dseditgroup -o edit -n /Local/Default -d "$user" -t user wheel 2>/dev/null || true
-  # Cross-env: production user must not be in the dev group and vice versa.
-  chmod 700 "/Users/$user" 2>/dev/null || true
-  chown "$user:staff" "/Users/$user" 2>/dev/null || true
+  /usr/sbin/createhomedir -c -u "$user" >/dev/null 2>&1 || true
+  mkdir -p "/Users/$user"
+  chown -R "$user:staff" "/Users/$user"
+  chmod 700 "/Users/$user"
   chmod -a "user:$user deny read,write,execute,delete,append,add_file,add_subdirectory,directory_inherit,file_inherit" \
     "$INTERACTIVE_HOME" 2>/dev/null || true
   chmod +a "user:$user deny read,write,execute,delete,append,add_file,add_subdirectory,directory_inherit,file_inherit" \
