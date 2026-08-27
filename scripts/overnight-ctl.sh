@@ -62,6 +62,22 @@ wake_overnight() {
   return 1
 }
 
+# Same checks we used to type by hand: logs on disk + processes as the sandbox user.
+report_worker() {
+  echo "==> waiting 3s for launchd…"
+  sleep 3
+  echo "==> $PROD/logs"
+  ls -la "$PROD/logs" 2>/dev/null || echo "(no logs directory)"
+  echo "==> tail overnight.stdout.log"
+  tail -n 40 "$PROD/logs/overnight.stdout.log" 2>/dev/null || echo "(no overnight.stdout.log yet)"
+  echo "==> tail overnight.stderr.log"
+  tail -n 20 "$PROD/logs/overnight.stderr.log" 2>/dev/null || echo "(no overnight.stderr.log yet)"
+  echo "==> ps -u secondbrain-agent"
+  if ! ps -u secondbrain-agent 2>/dev/null; then
+    echo "(no secondbrain-agent processes)"
+  fi
+}
+
 case "$CMD" in
   stop)
     printf 'stop\n' > "$VAULT/Notes/Overnight/STOP"
@@ -85,6 +101,7 @@ case "$CMD" in
     else
       echo "started (daemon loaded, worker did not appear). Check /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log"
     fi
+    report_worker
     ;;
   status)
     if [[ -f "$VAULT/Notes/Overnight/STOP" || -f "$PROD/STOP" ]]; then
