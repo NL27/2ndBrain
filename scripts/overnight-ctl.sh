@@ -10,20 +10,8 @@ CMD="${1:-status}"
 
 mkdir -p "$VAULT/Notes/Overnight" "$PROD/state" "$PROD/logs" "$DEV/state" "$DEV/logs" 2>/dev/null || true
 
-ensure_overnight_daemon() {
-  if launchctl print system/com.dao.secondbrain.overnight >/dev/null 2>&1; then
-    return 0
-  fi
-  if [[ ! -f "$HERE/defend-setup.sh" ]]; then
-    return 1
-  fi
-  echo "Production daemon is not loaded — macOS will ask for an admin password to install it." >&2
-  bash "$HERE/defend-setup.sh" || true
-  launchctl print system/com.dao.secondbrain.overnight >/dev/null 2>&1
-}
-
-# launchd only notices run-now after the daemon is loaded. User-level kickstart
-# on a system LaunchDaemon is usually ignored; WatchPaths or root kickstart works.
+# Start runs overnight-run.sh as the logged-in user. No LaunchDaemon, no
+# defend-setup, no admin password. 02:00 launchd is optional.
 SYS_RUNNER="/Library/Application Support/SecondBrain/sandbox/overnight-run.sh"
 
 allow_agent_append() {
@@ -72,43 +60,24 @@ worker_stable() {
   worker_started
 }
 
-system_runner_stale() {
-  if ! launchctl print system/com.dao.secondbrain.overnight >/dev/null 2>&1; then
-    return 0
-  fi
-  [[ -f "$HERE/overnight-run.sh" ]] || return 1
-  local uname=""
-  uname="$(/usr/libexec/PlistBuddy -c 'Print :UserName' /Library/LaunchDaemons/com.dao.secondbrain.overnight.plist 2>/dev/null || true)"
-  ! cmp -s "$HERE/overnight-run.sh" "$SYS_RUNNER" 2>/dev/null \
-    || [[ "$uname" == "secondbrain-agent" || -z "$uname" ]]
-}
-
-kickstart_as_admin() {
-  echo "Asking macOS to run overnight as you (no sandbox user) and kickstart (admin password)…" >&2
-  osascript <<OSA >/dev/null
-do shell script "export SECONDBRAIN_INTERACTIVE_USER='$USER'; /bin/bash '$HERE/overnight-privileged-wake.sh'" with administrator privileges
-OSA
-}
-
-wake_overnight() {
-  local did_admin=0
-  if system_runner_stale; then
-    echo "System overnight-run.sh is stale — admin password to install this repo's script." >&2
-    kickstart_as_admin || true
-    did_admin=1
-  else
-    touch_run_now
-  fi
-  worker_stable && return 0
-  if (( did_admin == 0 )); then
-    kickstart_as_admin || true
-  fi
+start_direct() {
+  mkdir -p "$PROD/logs" "$PROD/state" "$PROD/queue" "$PROD/work"
+  rm -rf "$PROD/state/worker.lock" "$PROD/state/current.json"
+  echo "======== $(date -u +%Y-%m-%dT%H:%M:%SZ) overnight-ctl start (direct, no launchd) ========" >> "$PROD/logs/overnight.stderr.log"
+  echo "Starting overnight as $USER from $HERE/overnight-run.sh (no admin)…" >&2
+  export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+  export SECONDBRAIN_ENV=production
+  export CLINE_SESSION_BACKEND_MODE=local
+  nohup /bin/bash "$HERE/overnight-run.sh" \
+    >> "$PROD/logs/overnight.stdout.log" \
+    2>> "$PROD/logs/overnight.stderr.log" &
+  echo $! > "$PROD/state/direct.pid"
   worker_stable
 }
 
 # Same checks we used to type by hand: logs on disk + processes as the sandbox user.
 report_worker() {
-  echo "==> waiting 3s for launchd…"
+  echo "==> waiting 3s…"
   sleep 3
   echo "==> $PROD/logs"
   ls -la "$PROD/logs" 2>/dev/null || echo "(no logs directory)"
@@ -119,10 +88,10 @@ report_worker() {
   echo "==> overnight / cline processes"
   pgrep -lf overnight-run.sh 2>/dev/null || echo "(no overnight-run.sh)"
   pgrep -lf /opt/homebrew/bin/cline 2>/dev/null || echo "(no homebrew cline)"
-  echo "==> launchctl print (production)"
+  echo "==> launchd (optional 02:00 job)"
   launchctl print system/com.dao.secondbrain.overnight 2>/dev/null \
     | grep -E 'state =|pid =|last exit code|program =|runs =|error|user =' \
-    || echo "(cannot print daemon)"
+    || echo "not loaded (Start does not need it)"
   echo "==> queue"
   found=0
   for f in "$PROD/queue"/*.md "$PROD/queue"/*.txt; do
@@ -168,19 +137,16 @@ case "$CMD" in
     ;;
   start)
     rm -f "$VAULT/Notes/Overnight/STOP" "$PROD/STOP" "$DEV/STOP" \
-          "$PROD/state/stop" "$DEV/state/stop" "$PROD/state/current.json"
+          "$PROD/state/stop" "$DEV/state/stop"
     if [[ -x "$HERE/overnight-queue-sync.sh" ]]; then
       bash "$HERE/overnight-queue-sync.sh" >/dev/null 2>&1 || true
     fi
-    ensure_overnight_daemon || true
-    if ! launchctl print system/com.dao.secondbrain.overnight >/dev/null 2>&1; then
-      echo "started (STOP cleared). Production daemon is still not loaded — approve the admin dialog, then run: scripts/overnight-ctl.sh start"
-      exit 0
-    fi
-    if wake_overnight; then
-      echo "started (production worker is up — watch the log window for a pid)"
+    if worker_started; then
+      echo "already running"
+    elif start_direct; then
+      echo "started (direct worker as $USER — no admin)"
     else
-      echo "started (daemon loaded, worker did not appear). Check /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log"
+      echo "started but worker did not appear — check $PROD/logs/overnight.stderr.log"
     fi
     report_worker
     ;;
