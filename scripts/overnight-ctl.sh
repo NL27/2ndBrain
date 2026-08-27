@@ -119,13 +119,8 @@ report_worker() {
   else
     echo "not answering — overnight will brew install / start Ollama (no Desktop app)"
   fi
-  echo "==> overnight-run.sh (system vs repo)"
-  ls -la "$SYS_RUNNER" 2>/dev/null || echo "(missing overnight-run.sh)"
-  if cmp -s "$HERE/overnight-run.sh" "$SYS_RUNNER" 2>/dev/null; then
-    echo "system copy matches this repo"
-  else
-    echo "STALE: system copy does not match $HERE/overnight-run.sh — approve the admin dialog"
-  fi
+  echo "==> overnight-run.sh"
+  echo "direct: $HERE/overnight-run.sh"
 }
 
 case "$CMD" in
