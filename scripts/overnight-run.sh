@@ -60,9 +60,10 @@ EVENTS="$DROP/logs/overnight.events.log"
 TIMINGS="$DROP/logs/timings.jsonl"
 QUEUE="$DROP/queue"
 WORK="$DROP/work"
+CLINE_DATA="$DROP/state/cline-data"
 CLINE_BIN="${CLINE_BIN:-}"
 TIMEOUT="${OVERNIGHT_BUDGET:-${TIMEOUT_DEFAULT:-0}}"
-ITER_TIMEOUT="${OVERNIGHT_ITER_TIMEOUT:-${ITER_TIMEOUT_DEFAULT:-14400}}"
+ITER_TIMEOUT="${OVERNIGHT_ITER_TIMEOUT:-${ITER_TIMEOUT_DEFAULT:-28800}}"
 MAX_ITERS="${OVERNIGHT_MAX_ITERS:-${MAX_ITERS_DEFAULT:-8}}"
 SAFETY="${OVERNIGHT_SAFETY:-${SAFETY_DEFAULT:-604800}}"
 UNTIL_STOP="${OVERNIGHT_UNTIL_STOP:-${UNTIL_STOP_DEFAULT:-1}}"
@@ -143,18 +144,18 @@ if [[ -z "$CLINE_BIN" ]]; then
 fi
 
 # Cline 3 -P is a built-in SDK id (ollama), not a custom providers.json key.
-# Seed ~/.cline so overnight does not depend on an interactive `cline auth`.
+# Isolated --data-dir so overnight does not inherit a 900ms timeout from ~/.cline.
 ensure_ollama_provider() {
-  python3 - "${HOME}/.cline/data" <<'PY'
-import json, os, sys
+  python3 - "$1" <<'PY'
+import json, sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 root = Path(sys.argv[1])
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 base = "http://127.0.0.1:11434"
-# Cline treats provider "timeout" as milliseconds. 900 was 0.9s; 15 min was still tight for Qwen.
-timeout_ms = 3_600_000
+# Cline treats provider "timeout" as milliseconds. 900 was 0.9s and aborted every call.
+timeout_ms = 14_400_000  # 4 hours
 ollama = {
     "settings": {
         "provider": "ollama",
@@ -165,6 +166,8 @@ ollama = {
         "timeout": timeout_ms,
         "requestTimeout": timeout_ms,
         "requestTimeoutMs": timeout_ms,
+        "timeoutMs": timeout_ms,
+        "ollamaTimeoutMs": timeout_ms,
     },
     "updatedAt": now,
     "tokenSource": "manual",
@@ -199,13 +202,23 @@ for rel in ("globalState.json", "settings/global-settings.json"):
             extra = {}
     extra["requestTimeoutMs"] = timeout_ms
     extra["ollamaRequestTimeoutMs"] = timeout_ms
+    extra["timeout"] = timeout_ms
+    extra["timeoutMs"] = timeout_ms
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(extra, indent=2) + "\n", encoding="utf-8")
-print(timeout_ms, file=sys.stderr)
+print(timeout_ms)
 PY
 }
-ensure_ollama_provider
-echo "Cline Ollama request timeout is 60 minutes per reply." >&2
+ensure_ollama_provider "${HOME}/.cline/data" >/dev/null
+OLLAMA_TIMEOUT_MS="$(ensure_ollama_provider "$CLINE_DATA")"
+OLLAMA_TIMEOUT_MS="${OLLAMA_TIMEOUT_MS:-14400000}"
+echo "Cline Ollama request timeout is $(( OLLAMA_TIMEOUT_MS / 60000 )) minutes ($OLLAMA_TIMEOUT_MS ms) via $CLINE_DATA" >&2
+CLINE_DATA_ARGS=()
+if "$CLINE_BIN" --help 2>&1 | grep -q -- '--data-dir'; then
+  CLINE_DATA_ARGS=( --data-dir "$CLINE_DATA" )
+else
+  echo "Cline has no --data-dir flag — timeout was also written to ~/.cline/data" >&2
+fi
 
 # Homebrew Ollama is a CLI (+ menubar), not an app on the Desktop.
 ensure_ollama() {
@@ -729,7 +742,9 @@ EOF
     PROMPT+=$'\n---\n'"$TASK"
 
     export CLINE_SESSION_BACKEND_MODE="${CLINE_SESSION_BACKEND_MODE:-local}"
-    WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" -P ollama -m qwen3.5:4b \
+    export CLINE_REQUEST_TIMEOUT_MS="${OLLAMA_TIMEOUT_MS:-14400000}"
+    WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" "${CLINE_DATA_ARGS[@]}" \
+      -P ollama -m qwen3.5:4b \
       --timeout "$SLICE_TO" --retries 2 --thinking none --json --auto-approve true "$PROMPT" )
     CLINE_OUT="$DROP/logs/cline-$RUN_ID.out"
     CLINE_ERR="$DROP/logs/cline-$RUN_ID.err"

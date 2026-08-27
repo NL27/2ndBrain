@@ -15,7 +15,7 @@
       "timeout": 0,
       "safety_timeout": 604800,
       "until_stop": true,
-      "iter_timeout": 14400,
+      "iter_timeout": 28800,
       "max_iters": 8,
       "hour": 2,
       "minute": 0
