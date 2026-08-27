@@ -24,21 +24,30 @@ ensure_overnight_daemon() {
 
 # launchd only notices run-now after the daemon is loaded. User-level kickstart
 # on a system LaunchDaemon is usually ignored; WatchPaths or root kickstart works.
+repair_drop_perms() {
+  local drop="$1" group="$2"
+  mkdir -p "$drop/logs" "$drop/state" "$drop/work" "$drop/queue"
+  chgrp "$group" "$drop" "$drop/logs" "$drop/state" "$drop/work" "$drop/queue" 2>/dev/null || true
+  chmod 770 "$drop" "$drop/logs" "$drop/state" "$drop/work" "$drop/queue" 2>/dev/null || true
+}
+
 touch_run_now() {
-  mkdir -p "$PROD/state" "$PROD/logs" "$DEV/state" "$DEV/logs"
+  repair_drop_perms "$PROD" secondbrain
+  repair_drop_perms "$DEV" secondbrain-dev
   date -u +%Y-%m-%dT%H:%M:%SZ > "$PROD/state/run-now"
   date -u +%Y-%m-%dT%H:%M:%SZ > "$DEV/state/run-now"
 }
 
 worker_started() {
-  [[ -f "$PROD/logs/overnight.stdout.log" || -f "$PROD/logs/overnight.stderr.log" ]] \
-    || pgrep -u secondbrain-agent >/dev/null 2>&1
+  pgrep -u secondbrain-agent >/dev/null 2>&1 \
+    || { [[ -s "$PROD/logs/overnight.stdout.log" ]] && return 0; } \
+    || { [[ -s "$PROD/logs/overnight.stderr.log" ]] && return 0; }
 }
 
 kickstart_as_admin() {
-  echo "Asking macOS to kickstart the overnight daemon (admin password)…" >&2
-  osascript <<'OSA' >/dev/null
-do shell script "launchctl kickstart -k system/com.dao.secondbrain.overnight; launchctl kickstart -k system/com.dao.secondbrain.overnight-dev" with administrator privileges
+  echo "Asking macOS to fix log permissions and kickstart overnight (admin password)…" >&2
+  osascript <<OSA >/dev/null
+do shell script "chown -R $USER:secondbrain /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 770 /Users/Shared/2nd-Brain-Night /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; touch /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chown secondbrain-agent:secondbrain /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chmod 664 /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chown -R $USER:secondbrain-dev /Users/Shared/2nd-Brain-Dev/logs /Users/Shared/2nd-Brain-Dev/state 2>/dev/null; chmod 770 /Users/Shared/2nd-Brain-Dev /Users/Shared/2nd-Brain-Dev/logs /Users/Shared/2nd-Brain-Dev/state 2>/dev/null; touch /Users/Shared/2nd-Brain-Dev/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Dev/logs/overnight.stderr.log 2>/dev/null; chown secondbrain-dev:secondbrain-dev /Users/Shared/2nd-Brain-Dev/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Dev/logs/overnight.stderr.log 2>/dev/null; launchctl kickstart -k system/com.dao.secondbrain.overnight; launchctl kickstart -k system/com.dao.secondbrain.overnight-dev" with administrator privileges
 OSA
 }
 
@@ -73,9 +82,18 @@ report_worker() {
   echo "==> tail overnight.stderr.log"
   tail -n 20 "$PROD/logs/overnight.stderr.log" 2>/dev/null || echo "(no overnight.stderr.log yet)"
   echo "==> ps -u secondbrain-agent"
-  if ! ps -u secondbrain-agent 2>/dev/null; then
+  if ! pgrep -u secondbrain-agent >/dev/null 2>&1; then
     echo "(no secondbrain-agent processes)"
+  else
+    ps -u secondbrain-agent 2>/dev/null || true
   fi
+  echo "==> launchctl print (production)"
+  launchctl print system/com.dao.secondbrain.overnight 2>/dev/null \
+    | grep -E 'state =|pid =|last exit code|program =|runs =|error' \
+    || echo "(cannot print daemon)"
+  echo "==> overnight-run.sh"
+  ls -la "/Library/Application Support/SecondBrain/sandbox/overnight-run.sh" 2>/dev/null \
+    || echo "(missing overnight-run.sh)"
 }
 
 case "$CMD" in

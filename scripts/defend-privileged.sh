@@ -68,11 +68,19 @@ ensure_user() {
 }
 
 ensure_drop() {
-  local drop="$1" group="$2"
+  local drop="$1" group="$2" user="${3:-}"
   mkdir -p "$drop"/{queue,queue/done,queue/rejected,work,logs,state}
-  chown "$INTERACTIVE:$group" "$drop"
+  # Recurse: a josh:wheel logs dir is not writable by secondbrain-agent, so
+  # launchd never creates overnight.stdout.log and the job never starts.
+  chown -R "$INTERACTIVE:$group" "$drop"
   chmod 770 "$drop"
-  chmod -R g+rwX "$drop"
+  chmod -R g+rwX,o-rwx "$drop"
+  chmod 770 "$drop/logs" "$drop/state" "$drop/queue" "$drop/work"
+  if [[ -n "$user" ]]; then
+    touch "$drop/logs/overnight.stdout.log" "$drop/logs/overnight.stderr.log"
+    chown "$user:$group" "$drop/logs/overnight.stdout.log" "$drop/logs/overnight.stderr.log"
+    chmod 664 "$drop/logs/overnight.stdout.log" "$drop/logs/overnight.stderr.log"
+  fi
   echo "$INTERACTIVE" > "$drop/.interactive-user"
   chmod 640 "$drop/.interactive-user"
   chown "$INTERACTIVE:$group" "$drop/.interactive-user"
@@ -131,8 +139,8 @@ ensure_user "secondbrain-dev" "2nd Brain Dev" "$GROUP_DEV"
 dseditgroup -o edit -n /Local/Default -d "secondbrain-agent" -t user "$GROUP_DEV" 2>/dev/null || true
 dseditgroup -o edit -n /Local/Default -d "secondbrain-dev" -t user "$GROUP_PROD" 2>/dev/null || true
 
-ensure_drop "$DROP_PROD" "$GROUP_PROD"
-ensure_drop "$DROP_DEV" "$GROUP_DEV"
+ensure_drop "$DROP_PROD" "$GROUP_PROD" secondbrain-agent
+ensure_drop "$DROP_DEV" "$GROUP_DEV" secondbrain-dev
 
 # --- sandbox profile + allowlist (system copy, agent-readable) -------------
 SANDBOX_SRC="$ROOT/Resources/sandbox"
