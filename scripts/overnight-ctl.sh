@@ -24,61 +24,77 @@ ensure_overnight_daemon() {
 
 # launchd only notices run-now after the daemon is loaded. User-level kickstart
 # on a system LaunchDaemon is usually ignored; WatchPaths or root kickstart works.
+SYS_RUNNER="/Library/Application Support/SecondBrain/sandbox/overnight-run.sh"
+
+allow_agent_append() {
+  local drop="$1" agent="$2" f
+  chmod -a "user:$agent allow read,write,append" "$drop/logs" 2>/dev/null || true
+  chmod +a "user:$agent allow list,search,add_file,add_subdirectory,read,write,append" "$drop/logs" 2>/dev/null || true
+  for f in "$drop/logs"/*.jsonl; do
+    [[ -f "$f" ]] || continue
+    chmod -a "user:$agent allow read,write,append" "$f" 2>/dev/null || true
+    chmod +a "user:$agent allow read,write,append" "$f" 2>/dev/null || true
+  done
+}
+
 repair_drop_perms() {
-  local drop="$1" group="$2"
+  local drop="$1" group="$2" agent="$3"
   local f
   mkdir -p "$drop/logs" "$drop/state" "$drop/work" "$drop/queue"
   chgrp "$group" "$drop" "$drop/logs" "$drop/state" "$drop/work" "$drop/queue" 2>/dev/null || true
   chmod 770 "$drop" "$drop/logs" "$drop/state" "$drop/work" "$drop/queue" 2>/dev/null || true
-  # activity.jsonl / connections.jsonl are created as josh:wheel; the agent
-  # must be able to append. Skip root-owned snitch-keeper logs.
   for f in "$drop/logs"/*.jsonl "$drop/state"/*; do
     [[ -e "$f" ]] || continue
     [[ "$(stat -f '%Su' "$f" 2>/dev/null)" == "root" ]] && continue
     chgrp "$group" "$f" 2>/dev/null || true
     chmod g+rw "$f" 2>/dev/null || true
   done
+  allow_agent_append "$drop" "$agent"
 }
 
 touch_run_now() {
-  repair_drop_perms "$PROD" secondbrain
-  repair_drop_perms "$DEV" secondbrain-dev
+  repair_drop_perms "$PROD" secondbrain secondbrain-agent
+  repair_drop_perms "$DEV" secondbrain-dev secondbrain-dev
   date -u +%Y-%m-%dT%H:%M:%SZ > "$PROD/state/run-now"
   date -u +%Y-%m-%dT%H:%M:%SZ > "$DEV/state/run-now"
 }
 
 worker_started() {
-  # distnoted/cfprefsd also run as secondbrain-agent after a kickstart; those
-  # are not the overnight worker.
   pgrep -u secondbrain-agent -f 'overnight-run.sh' >/dev/null 2>&1 \
     || pgrep -u secondbrain-agent -f '/cline' >/dev/null 2>&1
 }
 
+# A crash in the first second used to count as "up" and skip installing the new runner.
+worker_stable() {
+  worker_started || return 1
+  sleep 2
+  worker_started
+}
+
+system_runner_stale() {
+  [[ -f "$HERE/overnight-run.sh" ]] || return 1
+  ! cmp -s "$HERE/overnight-run.sh" "$SYS_RUNNER" 2>/dev/null
+}
+
 kickstart_as_admin() {
-  echo "Asking macOS to fix log permissions and kickstart overnight (admin password)…" >&2
+  echo "Asking macOS to install overnight-run.sh, fix log ACLs, and kickstart (admin password)…" >&2
   osascript <<OSA >/dev/null
-do shell script "cp '$HERE/overnight-run.sh' '/Library/Application Support/SecondBrain/sandbox/overnight-run.sh'; chmod 755 '/Library/Application Support/SecondBrain/sandbox/overnight-run.sh'; chown -R $USER:secondbrain /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 770 /Users/Shared/2nd-Brain-Night /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 660 /Users/Shared/2nd-Brain-Night/logs/*.jsonl /Users/Shared/2nd-Brain-Night/state/* 2>/dev/null; true; touch /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chown secondbrain-agent:secondbrain /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chmod 664 /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chown -R $USER:secondbrain-dev /Users/Shared/2nd-Brain-Dev/logs /Users/Shared/2nd-Brain-Dev/state 2>/dev/null; chmod 770 /Users/Shared/2nd-Brain-Dev /Users/Shared/2nd-Brain-Dev/logs /Users/Shared/2nd-Brain-Dev/state 2>/dev/null; launchctl kickstart -k system/com.dao.secondbrain.overnight; launchctl kickstart -k system/com.dao.secondbrain.overnight-dev" with administrator privileges
+do shell script "cp '$HERE/overnight-run.sh' '$SYS_RUNNER'; chmod 755 '$SYS_RUNNER'; chown -R $USER:secondbrain /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 770 /Users/Shared/2nd-Brain-Night /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod g+rw /Users/Shared/2nd-Brain-Night/logs/*.jsonl 2>/dev/null; true; chmod +a 'user:secondbrain-agent allow read,write,append' /Users/Shared/2nd-Brain-Night/logs/activity.jsonl 2>/dev/null; true; : > /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; : > /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log; chown secondbrain-agent:secondbrain /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log /Users/Shared/2nd-Brain-Night/logs/activity.jsonl; chmod 664 /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log /Users/Shared/2nd-Brain-Night/logs/activity.jsonl; chown -R $USER:secondbrain-dev /Users/Shared/2nd-Brain-Dev/logs /Users/Shared/2nd-Brain-Dev/state 2>/dev/null; true; launchctl kickstart -k system/com.dao.secondbrain.overnight; launchctl kickstart -k system/com.dao.secondbrain.overnight-dev" with administrator privileges
 OSA
 }
 
 wake_overnight() {
   touch_run_now
-  launchctl kickstart -k system/com.dao.secondbrain.overnight 2>/dev/null || true
-  launchctl kickstart -k system/com.dao.secondbrain.overnight-dev 2>/dev/null || true
-  local n=0
-  while (( n < 6 )); do
-    worker_started && return 0
-    sleep 1
-    n=$((n + 1))
-  done
+  if system_runner_stale; then
+    echo "System overnight-run.sh is stale (still the 04:06 copy until admin installs this repo's script)." >&2
+    kickstart_as_admin || true
+  else
+    launchctl kickstart -k system/com.dao.secondbrain.overnight 2>/dev/null || true
+    launchctl kickstart -k system/com.dao.secondbrain.overnight-dev 2>/dev/null || true
+  fi
+  worker_stable && return 0
   kickstart_as_admin || true
-  n=0
-  while (( n < 8 )); do
-    worker_started && return 0
-    sleep 1
-    n=$((n + 1))
-  done
-  return 1
+  worker_stable
 }
 
 # Same checks we used to type by hand: logs on disk + processes as the sandbox user.
@@ -101,9 +117,15 @@ report_worker() {
   launchctl print system/com.dao.secondbrain.overnight 2>/dev/null \
     | grep -E 'state =|pid =|last exit code|program =|runs =|error' \
     || echo "(cannot print daemon)"
-  echo "==> overnight-run.sh"
-  ls -la "/Library/Application Support/SecondBrain/sandbox/overnight-run.sh" 2>/dev/null \
-    || echo "(missing overnight-run.sh)"
+  echo "==> overnight-run.sh (system vs repo)"
+  ls -la "$SYS_RUNNER" 2>/dev/null || echo "(missing overnight-run.sh)"
+  if cmp -s "$HERE/overnight-run.sh" "$SYS_RUNNER" 2>/dev/null; then
+    echo "system copy matches this repo"
+  else
+    echo "STALE: system copy does not match $HERE/overnight-run.sh — approve the admin dialog"
+  fi
+  echo "==> activity.jsonl ACL"
+  ls -le "$PROD/logs/activity.jsonl" 2>/dev/null || true
 }
 
 case "$CMD" in
