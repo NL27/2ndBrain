@@ -393,19 +393,43 @@ killed_by_signal() {
   (( rc == 137 || rc == 143 || rc == 130 ))
 }
 
+# Loud lines for `overnight-ctl.sh watch` (it tails this stderr log).
+announce() {
+  local ts line
+  ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  {
+    echo
+    echo "======== $ts ========"
+    for line in "$@"; do
+      [[ -n "$line" ]] && printf '%s\n' "$line"
+    done
+    echo "=============================="
+    echo
+  } >&2
+}
+
+queue_waiting() {
+  ls -1 "$QUEUE" 2>/dev/null | grep -E '\.(md|txt)$' | grep -v -E '^(README|readme|standing-mission)\.' | tr '\n' ' '
+}
+
+peek_next_after() {
+  local current="$1"
+  ls -1 "$QUEUE" 2>/dev/null | grep -E '\.(md|txt)$' | grep -v -E '^(README|readme|standing-mission)\.' | grep -v -F -x "$current" | head -1
+}
+
 # Indeterminate bar while Cline/Ollama think. Writes JSON heartbeats into the
 # same .out file people tail, plus state/progress.json for the app console.
 heartbeat_until() {
-  local pid="$1" item="$2" out="$3"
+  local pid="$1" item="$2" out="$3" part="${4:-1}"
   local elapsed=0
   local progress="$DROP/state/progress.json"
   while kill -0 "$pid" 2>/dev/null; do
     sleep 5
     elapsed=$((elapsed + 5))
-    python3 - "$progress" "$out" "$item" "$elapsed" "$pid" <<'PY'
+    python3 - "$progress" "$out" "$item" "$elapsed" "$pid" "$part" <<'PY'
 import json, os, sys, urllib.request
 from datetime import datetime, timezone
-progress, out, item, elapsed, pid = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
+progress, out, item, elapsed, pid, part = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5], sys.argv[6]
 w = 24
 pos = (elapsed // 5) % w
 bar = "[" + (" " * pos) + "█" + (" " * (w - pos - 1)) + f"] {elapsed}s"
@@ -419,17 +443,17 @@ except Exception:
 ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 doc = {
     "ts": ts, "type": "heartbeat", "elapsed_s": elapsed, "item": item,
-    "pid": pid, "ollama": ollama, "bar": bar, "alive": True,
+    "part": part, "pid": pid, "ollama": ollama, "bar": bar, "alive": True,
 }
 os.makedirs(os.path.dirname(progress), exist_ok=True)
 open(progress, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
-line = json.dumps({"ts": ts, "type": "heartbeat", "elapsed_s": elapsed, "item": item, "ollama": ollama, "bar": bar})
+line = json.dumps({"ts": ts, "type": "heartbeat", "elapsed_s": elapsed, "item": item, "part": part, "ollama": ollama, "bar": bar})
 try:
     with open(out, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 except OSError:
     pass
-print(f"still working  {bar}  item={item}  ollama={ollama}", file=sys.stderr, flush=True)
+print(f"still working  {bar}  task={item}  part={part}  ollama={ollama}", file=sys.stderr, flush=True)
 PY
   done
   python3 - "$DROP/state/progress.json" <<'PY' 2>/dev/null || true
@@ -557,6 +581,7 @@ ITEMS_DONE=0
 LAST_RC=0
 ANY_FAIL=0
 SUMMARY_LINES=()
+PREV_TASK=""
 
 log_event run_start runId "$RUN_ID" env "${ENV_LABEL:-production}" budget "$TIMEOUT" untilStop "$UNTIL_STOP"
 
@@ -575,6 +600,7 @@ while true; do
   if [[ -z "$ITEM" ]]; then
     if [[ "$UNTIL_STOP" == "1" ]]; then
       echo "queue empty — putting 01–05 back so Cline always has work" >&2
+      announce "QUEUE EMPTY" "Putting 01–05 back. Next file will be a NEW TASK, not the next part of the last one."
       if [[ -x "$SCRIPT_DIR/overnight-queue-seed.sh" ]]; then
         bash "$SCRIPT_DIR/overnight-queue-seed.sh" >/dev/null 2>&1 || true
       fi
@@ -602,6 +628,9 @@ $(cat "$REFINE_SRC")"
     if [[ -n "$REJECT_KIND" ]]; then
       mkdir -p "$QUEUE/rejected"
       mv "$QUEUE/$ITEM" "$QUEUE/rejected/$ITEM"
+      announce "SKIP TASK  $ITEM" \
+        "Rejected ($REJECT_KIND) — not running this file." \
+        "Next queue file will be a different task."
       write_state status running queueItem "" pid "$$"
       log_event item_skip runId "$RUN_ID" item "$ITEM" reason "$REJECT_KIND"
       CURRENT_ITEM=""
@@ -610,6 +639,21 @@ $(cat "$REFINE_SRC")"
     fi
     TASK="$(cat "$QUEUE/$ITEM")"
   fi
+  if [[ -n "$PREV_TASK" && "$ITEM" != "$PREV_TASK" ]]; then
+    announce "SWITCH TASK" \
+      "Left:  $PREV_TASK" \
+      "Now:   $ITEM" \
+      "This is a new file from the queue (not the next part of the last task)." \
+      "Still waiting: $(queue_waiting)"
+  elif [[ "$ITEM" == "$PREV_TASK" ]]; then
+    announce "RETRY TASK  $ITEM" \
+      "Same queue file — previous attempt did not finish."
+  else
+    announce "NEW TASK  $ITEM" \
+      "Starting this queue file." \
+      "Queue: $(queue_waiting)"
+  fi
+  PREV_TASK="$ITEM"
   write_state runId "$RUN_ID" status running queueItem "$ITEM" pid "$$"
   mkdir -p "$WORK/$RUN_ID"
   cd "$WORK/$RUN_ID"
@@ -659,6 +703,14 @@ EOF
       touch "$f" 2>/dev/null || true
     done
     echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) slice start bin=$CLINE_BIN item=$ITEM backend=$CLINE_SESSION_BACKEND_MODE ===" >> "$CLINE_ERR"
+    if [[ "$ITER" -eq 1 ]]; then
+      announce "START PART  $ITEM  part $ITER/$MAX_ITERS" \
+        "Working on the first part of this task."
+    else
+      announce "NEXT PART  $ITEM  part $ITER/$MAX_ITERS" \
+        "Same task — moving to the next part." \
+        "${LAST_SLICE:+Last part said to do next: $LAST_SLICE}"
+    fi
     while ! ollama_model_resident; do
       if stop_requested; then
         ITEM_RC=0
@@ -672,7 +724,7 @@ EOF
     set +e
     "${WRAP[@]}" >> "$CLINE_OUT" 2>> "$CLINE_ERR" &
     cline_pid=$!
-    heartbeat_until "$cline_pid" "$ITEM" "$CLINE_OUT"
+    heartbeat_until "$cline_pid" "$ITEM" "$CLINE_OUT" "$ITER"
     wait "$cline_pid"
     ITEM_RC=$?
     set -uo pipefail
@@ -722,18 +774,29 @@ PY
       echo "Cline was stopped by kickstart — not failing $ITEM" >&2
       break
     fi
-    if [[ "$CONT" != "true" || "$ITEM_RC" -ne 0 ]]; then
-      break
+    if [[ "$CONT" == "true" && "$ITEM_RC" -eq 0 ]]; then
+      announce "PART DONE  $ITEM  part $ITER/$MAX_ITERS" \
+        "This part of the task is finished." \
+        "Staying on $ITEM for the next part (not a new queue file)." \
+        "${LAST_SLICE:+Next part: $LAST_SLICE}"
+      ITER=$((ITER + 1))
+      continue
     fi
-    ITER=$((ITER + 1))
+    if [[ "$ITEM_RC" -eq 0 ]]; then
+      announce "PART DONE  $ITEM  part $ITER/$MAX_ITERS" \
+        "This was the last part of $ITEM (eval continue=false)."
+    fi
+    break
   done
 
   LAST_RC=$ITEM_RC
   if killed_by_signal "$ITEM_RC"; then
+    announce "STOPPED  $ITEM" "Worker was killed — leaving this file in the queue."
     echo "leaving $ITEM in queue (process was killed)" >&2
     log_event item_interrupted runId "$RUN_ID" item "$ITEM" rc "$ITEM_RC"
     break
   elif [[ "$ITEM" == "__refine__" ]]; then
+    announce "REFINE  $LAST_COMPLETED" "No other queue files — improving the last finished task."
     log_event item_refine runId "$RUN_ID" from "$LAST_COMPLETED" iters "$ITER" rc "$ITEM_RC"
     sleep 20
   elif [[ "$ITEM" == "standing-mission.md" ]]; then
@@ -741,13 +804,24 @@ PY
     LAST_COMPLETED="standing-mission.md"
     write_state standingRan true lastCompleted "standing-mission.md"
     log_event standing_done runId "$RUN_ID" iters "$ITER" rc "$ITEM_RC"
+    announce "STANDING MISSION DONE" "Not a queue file — will take the next queue task if one exists."
   elif (( ITEM_RC == 0 )); then
+    next_file="$(peek_next_after "$ITEM")"
     mkdir -p "$QUEUE/done"
     mv "$QUEUE/$ITEM" "$QUEUE/done/$ITEM"
     LAST_COMPLETED="$ITEM"
     write_state lastCompleted "$ITEM"
     log_event item_done runId "$RUN_ID" item "$ITEM" iters "$ITER"
     rm -f "$DROP/state/retries.$ITEM"
+    if [[ -n "$next_file" ]]; then
+      announce "TASK DONE  $ITEM" \
+        "Moved to queue/done/." \
+        "NEXT TASK from the queue: $next_file"
+    else
+      announce "TASK DONE  $ITEM" \
+        "Moved to queue/done/." \
+        "No other queue files right now (will reseed 01–05 if until-stop)."
+    fi
   else
     # Timeouts and Cline rc=1 are not "queue empty". Keep the file and retry.
     retry_file="$DROP/state/retries.$ITEM"
@@ -756,14 +830,20 @@ PY
     retry_n=$((retry_n + 1))
     echo "$retry_n" > "$retry_file"
     if (( retry_n < 5 )); then
+      announce "PART FAILED  $ITEM  part $ITER" \
+        "Cline exited rc=$ITEM_RC — retry $retry_n/5 of the same task (not a new queue file)."
       echo "Cline failed ($ITEM rc=$ITEM_RC) — leaving it in queue (retry $retry_n/5)" >&2
       log_event item_retry runId "$RUN_ID" item "$ITEM" rc "$ITEM_RC" retry "$retry_n"
       sleep 15
     else
+      next_file="$(peek_next_after "$ITEM")"
       mkdir -p "$QUEUE/failed" || true
       mv "$QUEUE/$ITEM" "$QUEUE/failed/$ITEM" 2>/dev/null || true
       rm -f "$retry_file"
       log_event item_fail runId "$RUN_ID" item "$ITEM" rc "$ITEM_RC"
+      announce "TASK FAILED  $ITEM" \
+        "Moved to queue/failed/ after 5 tries." \
+        "${next_file:+NEXT TASK from the queue: $next_file}"
     fi
   fi
   if (( ITEM_RC != 0 )); then ANY_FAIL=1; fi

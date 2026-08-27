@@ -195,77 +195,17 @@ case "$CMD" in
     fi
     ;;
   watch)
-    pid="$(pgrep -n -f '/opt/homebrew/bin/cline --cwd' || true)"
-    if [[ -z "$pid" ]]; then
-      if pgrep -f '/overnight-run.sh' >/dev/null 2>&1; then
-        echo "Cline is waiting for Ollama to finish loading. Watching warmup…"
-        while pgrep -f '/overnight-run.sh' >/dev/null 2>&1; do
-          pid="$(pgrep -n -f '/opt/homebrew/bin/cline --cwd' || true)"
-          [[ -n "$pid" ]] && break
-          python3 - "$PROD/state/progress.json" <<'PY' 2>/dev/null || true
-import json, os, sys
-path = sys.argv[1]
-if not os.path.isfile(path):
-    print("still waiting  Ollama has not started loading yet")
-    raise SystemExit
-try:
-    d = json.load(open(path, encoding="utf-8"))
-except Exception:
-    d = {}
-bar = d.get("bar") or ""
-ollama = d.get("ollama") or "loading"
-print(f"still waiting  {bar}  ollama={ollama}")
-PY
-          sleep 5
-        done
-      fi
-      pid="$(pgrep -n -f '/opt/homebrew/bin/cline --cwd' || true)"
-    fi
-    if [[ -z "$pid" ]]; then
-      echo "Cline is not running. Start first: scripts/overnight-ctl.sh start" >&2
+    log="$PROD/logs/overnight.stderr.log"
+    if ! pgrep -f '/overnight-run.sh' >/dev/null 2>&1 && [[ ! -f "$log" ]]; then
+      echo "Overnight is not running. Start first: scripts/overnight-ctl.sh start" >&2
       exit 1
     fi
-    cwd="$(ps -p "$pid" -o args= 2>/dev/null | python3 -c 'import sys,re; s=sys.stdin.read(); m=re.search(r"--cwd (\S+)", s); print(m.group(1) if m else "")')"
-    run_id="$(basename "$cwd")"
-    out="$PROD/logs/cline-${run_id}.out"
-    [[ -f "$out" ]] || out="$(ls -t "$PROD/logs"/cline-*.out 2>/dev/null | head -1 || true)"
-    echo "Watching Cline pid=$pid  log=$out  (Ctrl-C stops the watcher, not Cline)"
-    item="queue"
-    [[ -n "$out" ]] || out="$PROD/logs/cline-watch.out"
-    elapsed=0
-    while kill -0 "$pid" 2>/dev/null; do
-      sleep 5
-      elapsed=$((elapsed + 5))
-      python3 - "$PROD/state/progress.json" "$out" "$item" "$elapsed" "$pid" <<'PY'
-import json, os, sys, urllib.request
-from datetime import datetime, timezone
-progress, out, item, elapsed, pid = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
-w = 24
-pos = (elapsed // 5) % w
-bar = "[" + (" " * pos) + "█" + (" " * (w - pos - 1)) + f"] {elapsed}s"
-ollama = "idle"
-try:
-    with urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=1) as r:
-        names = [m.get("name") or "" for m in json.load(r).get("models") or []]
-        ollama = ", ".join(n for n in names if n) or "loading model"
-except Exception:
-    ollama = "not answering"
-ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-line = json.dumps({"ts": ts, "type": "heartbeat", "elapsed_s": elapsed, "item": item, "ollama": ollama, "bar": bar})
-os.makedirs(os.path.dirname(progress), exist_ok=True)
-open(progress, "w", encoding="utf-8").write(json.dumps({
-    "ts": ts, "type": "heartbeat", "elapsed_s": elapsed, "item": item,
-    "pid": pid, "ollama": ollama, "bar": bar, "alive": True,
-}, indent=2) + "\n")
-try:
-    with open(out, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
-except OSError:
-    pass
-print(f"still working  {bar}  ollama={ollama}", flush=True)
-PY
-    done
-    echo "Cline pid $pid has exited"
+    mkdir -p "$PROD/logs"
+    touch "$log"
+    echo "Watching overnight (Ctrl-C stops this watcher, not Cline)."
+    echo "Banners: NEW TASK / START PART / PART DONE / NEXT PART / SWITCH TASK / TASK DONE"
+    echo
+    tail -n 50 -F "$log"
     ;;
   ollama)
     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
