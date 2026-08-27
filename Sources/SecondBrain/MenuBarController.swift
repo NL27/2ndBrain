@@ -101,8 +101,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         addItem(menu, "Open Vault in Obsidian", #selector(openVaultInObsidian))
         addItem(menu, "Open Vault Folder", #selector(openVaultFolder))
         addItem(menu, "Open Security Log", #selector(openSecurityLog))
-        addItem(menu, OvernightControl.isStopped ? "Start overnight agents" : "Stop overnight agents",
-                #selector(toggleOvernightAgents))
+        addItem(menu, "Overnight worker…", #selector(showOvernight))
         addItem(menu, "Turn Little Snitch Filter On", #selector(enableLittleSnitchFilter))
         addItem(menu, "Open Data Folder", #selector(openSupportFolder))
         menu.addItem(.separator())
@@ -286,12 +285,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         LittleSnitchKeeper.run()
     }
 
-    @objc private func toggleOvernightAgents() {
-        if OvernightControl.isStopped {
-            OvernightControl.start()
-        } else {
-            OvernightControl.stop()
-        }
+    @objc private func showOvernight() {
+        OvernightConsoleController.shared.present()
     }
 
     /// obsidian://open is the documented way to jump straight to a vault by path.

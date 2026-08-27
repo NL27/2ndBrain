@@ -60,17 +60,33 @@ final class SetupManager: ObservableObject {
 
     var isBusy: Bool { phase == .checking || phase == .installing }
 
-    /// Everything the core features need — optional extras (local LLM, always-on
-    /// screen memory) don't block readiness.
+    /// Everything the core features need. When Local AI is on, Ollama must be
+    /// *ready* (not merely skipped).
     var isReady: Bool {
-        hasProbed && steps.filter { !Step.optionalIDs.contains($0.id) }.allSatisfy(\.isSatisfied)
+        guard hasProbed else { return false }
+        return steps.allSatisfy { !isBlockingUnsatisfied($0) }
     }
 
     /// Nil until a run has actually reported back, so nothing claims an engine is
     /// missing before we've looked.
     var missingCount: Int? {
         guard hasProbed else { return nil }
-        return steps.filter { !Step.optionalIDs.contains($0.id) && !$0.isSatisfied }.count
+        return steps.filter(isBlockingUnsatisfied).count
+    }
+
+    private var optionalIDs: Set<String> {
+        var ids = Step.optionalIDs
+        if includeLocalAI { ids.remove(Step.ollamaID) }
+        return ids
+    }
+
+    private func isBlockingUnsatisfied(_ step: Step) -> Bool {
+        if optionalIDs.contains(step.id) { return false }
+        if step.id == Step.ollamaID, includeLocalAI {
+            if case .ready = step.state { return false }
+            return true
+        }
+        return !step.isSatisfied
     }
 
     func state(of id: String) -> StepState {
@@ -82,7 +98,9 @@ final class SetupManager: ObservableObject {
     /// Reports what is already installed without touching anything.
     func check() async {
         guard !isBusy else { return }
-        await run(arguments: ["--check"], phase: .checking)
+        var arguments = ["--check"]
+        if includeLocalAI { arguments.append("--with-ollama") }
+        await run(arguments: arguments, phase: .checking)
     }
 
     /// Installs everything that's missing. Long — Tiron and heed download GBs.
@@ -124,6 +142,11 @@ final class SetupManager: ObservableObject {
             }
         }
         for index in steps.indices {
+            let step = steps[index]
+            if step.id == Step.ollamaID, includeLocalAI, case .skipped = step.state {
+                steps[index].state = .unknown
+                continue
+            }
             if steps[index].isSatisfied { continue }
             steps[index].state = .unknown
         }
@@ -279,7 +302,7 @@ extension SetupManager.Step {
               purpose: "Radicale on 127.0.0.1 — Apple Calendar, vault task sync, no Google"),
         .init(id: "defend", title: "Sandbox user + network guard",
               purpose: "Prod + dev overnight users, activity watch, Little Snitch 3h filter keeper"),
-        .init(id: ollamaID, title: "Ollama (optional)",
+        .init(id: ollamaID, title: "Ollama",
               purpose: "Qwen 3.5 4B (notes) + Qwen 2.5 Coder 7B (code) on this Mac")
     ]
 }

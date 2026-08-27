@@ -560,7 +560,32 @@ step_heed() {
 OLLAMA_MODELS=(qwen3.5:4b qwen2.5-coder:7b)
 
 ollama_has() {
-  ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -Fxq "$1"
+  local want="$1"
+  python3 - "$want" <<'PY'
+import json, subprocess, sys, urllib.request
+want = sys.argv[1]
+names = []
+try:
+    out = subprocess.check_output(["ollama", "list"], text=True, stderr=subprocess.DEVNULL, timeout=8)
+    for line in out.splitlines()[1:]:
+        part = line.split()
+        if part:
+            names.append(part[0])
+except Exception:
+    pass
+try:
+    with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=2) as r:
+        for m in json.load(r).get("models") or []:
+            n = m.get("name") or ""
+            if n:
+                names.append(n)
+except Exception:
+    pass
+for n in names:
+    if n == want or n.startswith(want + ":") or n.startswith(want + "@"):
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
 }
 
 ollama_ensure_running() {
@@ -591,9 +616,25 @@ ollama_pull_one() {
 }
 
 step_ollama() {
+  # Already-pulled Qwen models count as ready even on a --check without --with-ollama.
+  local missing=1 model
+  if have ollama; then
+    missing=0
+    for model in "${OLLAMA_MODELS[@]}"; do
+      ollama_has "$model" || missing=1
+    done
+    if (( missing == 0 )); then
+      emit ollama ok "Ollama + ${OLLAMA_MODELS[*]} ready"
+      return 0
+    fi
+  fi
   # --only ollama still pulls even without --with-ollama.
   if (( WITH_OLLAMA == 0 )) && [[ -z "$ONLY" ]]; then
-    emit ollama skipped "Skipped (local AI model not requested)"
+    if have ollama; then
+      emit ollama skipped "Ollama is installed; turn Local AI on to pull Qwen 3.5 4B + Coder 7B"
+    else
+      emit ollama skipped "Skipped (local AI model not requested)"
+    fi
     return 0
   fi
   emit ollama checking "Looking for Ollama + Qwen models"
@@ -609,7 +650,7 @@ step_ollama() {
   # Homebrew's own service (homebrew.mxcl.ollama), not a 2nd Brain LaunchAgent.
   brew services start ollama >/dev/null 2>&1 || true
 
-  local missing=0 model
+  missing=0
   for model in "${OLLAMA_MODELS[@]}"; do
     ollama_has "$model" || missing=1
   done

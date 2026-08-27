@@ -25,7 +25,14 @@ case "$CMD" in
     fi
     date -u +%Y-%m-%dT%H:%M:%SZ > "$PROD/state/run-now" 2>/dev/null || true
     date -u +%Y-%m-%dT%H:%M:%SZ > "$DEV/state/run-now" 2>/dev/null || true
-    echo "started"
+    # WatchPaths should fire. kickstart wakes it immediately when the daemon is loaded.
+    launchctl kickstart -k system/com.dao.secondbrain.overnight 2>/dev/null || true
+    launchctl kickstart -k system/com.dao.secondbrain.overnight-dev 2>/dev/null || true
+    if launchctl print system/com.dao.secondbrain.overnight >/dev/null 2>&1; then
+      echo "started (production daemon loaded — watch the log window for a pid)"
+    else
+      echo "started (STOP cleared). Production daemon is not loaded — re-run defend with admin, or wait until 02:00."
+    fi
     ;;
   status)
     if [[ -f "$VAULT/Notes/Overnight/STOP" || -f "$PROD/STOP" ]]; then

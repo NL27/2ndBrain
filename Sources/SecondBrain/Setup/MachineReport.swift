@@ -37,9 +37,8 @@ struct MachineReport: Sendable {
         let blurb: String
         if profile.isAppleSilicon {
             blurb = """
-            Recommended for this Mac (\(String(format: "%.0f", profile.memoryGB)) GB): \
-            \(recommended.name) via \(recommended.source). It fits the unified memory \
-            budget while leaving headroom for live transcription and the desktop.
+            Pinned local models: qwen3.5:4b (notes) and qwen2.5-coder:7b (code) via Ollama. \
+            Turn Local AI on and Install missing if they are not listed as installed.
             """
         } else {
             blurb = "This Mac isn't Apple Silicon — prefer smaller cloud or CPU models; oMLX needs an M-series chip."
@@ -113,20 +112,16 @@ struct MachineReport: Sendable {
         let source: String
     }
 
+    private static let pinnedOllama: [Candidate] = [
+        Candidate(id: "ollama:qwen3.5:4b", name: "qwen3.5:4b", source: "Ollama"),
+        Candidate(id: "ollama:qwen2.5-coder:7b", name: "qwen2.5-coder:7b", source: "Ollama"),
+    ]
+
     private static func recommendedAIModel(memoryGB: Double, appleSilicon: Bool) -> Candidate {
         guard appleSilicon else {
             return Candidate(id: "cloud", name: "Cloud API (local LLMs too slow here)", source: "Cloud")
         }
-        switch memoryGB {
-        case 64...:
-            return Candidate(id: "omlx:qwen3-30b", name: "Qwen3 30B (MLX 4-bit)", source: "oMLX")
-        case 32..<64:
-            return Candidate(id: "omlx:llama3.1-8b", name: "Llama 3.1 8B (MLX)", source: "oMLX")
-        case 16..<32:
-            return Candidate(id: "omlx:llama3.2-3b", name: "Llama 3.2 3B (MLX)", source: "oMLX")
-        default:
-            return Candidate(id: "omlx:llama3.2-1b", name: "Llama 3.2 1B (MLX)", source: "oMLX")
-        }
+        return pinnedOllama[0]
     }
 
     private static func installedAIModels() -> [Candidate] {
@@ -137,7 +132,11 @@ struct MachineReport: Sendable {
             for line in ollama.split(separator: "\n").dropFirst() {
                 let name = line.split(whereSeparator: { $0.isWhitespace }).first.map(String.init) ?? ""
                 guard !name.isEmpty, name != "NAME" else { continue }
-                found.append(Candidate(id: "ollama:\(name)", name: name, source: "Ollama"))
+                var id = "ollama:\(name)"
+                for pin in pinnedOllama where name == pin.name || name.hasPrefix(pin.name + ":") {
+                    id = pin.id
+                }
+                found.append(Candidate(id: id, name: name, source: "Ollama"))
             }
         }
 
@@ -165,6 +164,13 @@ struct MachineReport: Sendable {
         for c in installed {
             byID[c.id] = AIModel(id: c.id, name: c.name, source: c.source,
                                  installed: true, recommended: c.id == recommendedID)
+        }
+        // Always show the two pinned Ollama models, even before they are pulled.
+        for pin in pinnedOllama {
+            if byID[pin.id] == nil {
+                byID[pin.id] = AIModel(id: pin.id, name: pin.name, source: pin.source,
+                                       installed: false, recommended: pin.id == recommendedID)
+            }
         }
         // Always surface the recommendation even if it isn't downloaded yet.
         if byID[recommendedID] == nil {

@@ -29,11 +29,20 @@ struct SetupView: View {
         .frame(width: 600)
         .task {
             DisplayAdvisor.applyRecommendedSettingsIfNeeded()
-            report = await Task.detached(priority: .userInitiated) { MachineReport.gather() }.value
+            await refreshReport()
             if manager.phase == .idle {
                 await manager.check()
+                await refreshReport()
                 if !manager.isReady { await manager.installMissing() }
+                await refreshReport()
             }
+        }
+        .onChange(of: manager.phase) {
+            if manager.phase == .done { Task { await refreshReport() } }
+        }
+        .onChange(of: manager.includeLocalAI) {
+            guard !manager.isBusy else { return }
+            if manager.includeLocalAI { Task { await manager.check() } }
         }
     }
 
@@ -144,6 +153,10 @@ struct SetupView: View {
         }
     }
 
+    private func refreshReport() async {
+        report = await Task.detached(priority: .userInitiated) { MachineReport.gather() }.value
+    }
+
     // MARK: - Install steps
 
     private var stepList: some View {
@@ -153,7 +166,14 @@ struct SetupView: View {
                 HStack(alignment: .top, spacing: 10) {
                     icon(for: step.state).frame(width: 18, height: 18)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(step.title).font(.system(size: 12, weight: .medium))
+                        HStack(spacing: 6) {
+                            Text(step.title).font(.system(size: 12, weight: .medium))
+                            if step.id == SetupManager.Step.ollamaID && !manager.includeLocalAI {
+                                Text("optional")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
                         Text(message(for: step)).font(.system(size: 11))
                             .foregroundColor(color(for: step.state))
                             .fixedSize(horizontal: false, vertical: true)
