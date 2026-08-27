@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Put 01–05 back in the vault production queue (and pull them out of
-# failed/done). Used on Start and whenever the live queue is empty.
+# Put 01–05 into the vault production queue. Manual only — Start does not
+# re-copy them (finished jobs stay in done/).
 set -uo pipefail
 
 VAULT="${SECOND_BRAIN_VAULT:-$HOME/Desktop/2nd Brain}"

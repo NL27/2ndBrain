@@ -144,7 +144,7 @@ report_worker() {
     found=1
   done
   if [[ "$found" -eq 0 ]]; then
-    echo "(empty — 01–05 will be seeded)"
+    echo "(empty)"
   fi
   echo "==> queue/failed"
   ls -1 "$PROD/queue/failed" 2>/dev/null || echo "(none)"
@@ -176,7 +176,6 @@ case "$CMD" in
     stop_workers
     rm -f "$VAULT/Notes/Overnight/STOP" "$PROD/STOP" "$DEV/STOP" \
           "$PROD/state/stop" "$DEV/state/stop"
-    seed_production_queue
     if [[ -x "$HERE/overnight-queue-sync.sh" ]]; then
       bash "$HERE/overnight-queue-sync.sh" >/dev/null 2>&1 || true
     fi
@@ -195,17 +194,90 @@ case "$CMD" in
     fi
     ;;
   watch)
-    log="$PROD/logs/overnight.stderr.log"
-    if ! pgrep -f '/overnight-run.sh' >/dev/null 2>&1 && [[ ! -f "$log" ]]; then
+    events="$PROD/logs/overnight.events.log"
+    progress="$PROD/state/progress.json"
+    if ! pgrep -f '/overnight-run.sh' >/dev/null 2>&1 && [[ ! -f "$events" ]]; then
       echo "Overnight is not running. Start first: scripts/overnight-ctl.sh start" >&2
       exit 1
     fi
-    mkdir -p "$PROD/logs"
-    touch "$log"
+    mkdir -p "$PROD/logs" "$PROD/state"
+    touch "$events"
     echo "Watching overnight (Ctrl-C stops this watcher, not Cline)."
-    echo "Banners: NEW TASK / START PART / PART DONE / NEXT PART / SWITCH TASK / TASK DONE"
     echo
-    tail -n 50 -F "$log"
+    python3 - "$events" "$progress" <<'PY'
+import json, os, sys, time
+from pathlib import Path
+
+events_path = Path(sys.argv[1])
+progress_path = Path(sys.argv[2])
+offset = 0
+clock_on = False
+
+def fmt(s):
+    s = max(0, int(s))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m:02d}:{sec:02d}"
+
+def progress_line():
+    if not progress_path.is_file():
+        return None
+    try:
+        d = json.loads(progress_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(d, dict) or not d.get("alive"):
+        return None
+    started = d.get("started_at")
+    try:
+        elapsed = time.time() - float(started) if started else int(d.get("elapsed_s") or 0)
+    except (TypeError, ValueError):
+        elapsed = int(d.get("elapsed_s") or 0)
+    clock = fmt(elapsed)
+    item = d.get("item") or ""
+    part = d.get("part") or ""
+    part_of = d.get("part_of") or ""
+    ollama = d.get("ollama") or ""
+    kind = d.get("type") or ""
+    if kind == "ollama_warmup" or item == "warmup":
+        return f"  loading Ollama   {clock}   {ollama}"
+    part_s = f"part {part}/{part_of}" if part_of else f"part {part}"
+    return f"  {item}   {part_s}   {clock}   {ollama}"
+
+if events_path.is_file():
+    data = events_path.read_bytes()
+    if data:
+        sys.stdout.write(data.decode("utf-8", errors="replace"))
+        if not data.endswith(b"\n"):
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+        offset = len(data)
+
+try:
+    while True:
+        if events_path.is_file():
+            data = events_path.read_bytes()
+            if len(data) > offset:
+                chunk = data[offset:].decode("utf-8", errors="replace")
+                offset = len(data)
+                if clock_on:
+                    sys.stdout.write("\n")
+                    clock_on = False
+                sys.stdout.write(chunk)
+                if chunk and not chunk.endswith("\n"):
+                    sys.stdout.write("\n")
+                sys.stdout.flush()
+        line = progress_line()
+        if line:
+            sys.stdout.write("\r\033[K" + line)
+            sys.stdout.flush()
+            clock_on = True
+        time.sleep(1)
+except KeyboardInterrupt:
+    if clock_on:
+        sys.stdout.write("\n")
+    sys.stdout.flush()
+PY
     ;;
   ollama)
     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
