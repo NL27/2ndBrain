@@ -244,11 +244,12 @@ mkdir -p "$DROP/bin"
 ln -sfn /usr/sbin/ioreg "$DROP/bin/ioreg" 2>/dev/null || true
 export PATH="$DROP/bin:$PATH"
 
-# Overnight hub on :25463 can keep a stale provider cache from earlier slices.
-pkill -f 'cline-hub-daemon' 2>/dev/null || true
-if command -v lsof >/dev/null; then
-  lsof -ti tcp:25463 2>/dev/null | xargs kill -9 2>/dev/null || true
-fi
+# Kickstart must not treat SIGTERM/SIGKILL as a failed queue item.
+killed_by_signal() {
+  local rc="${1:-0}"
+  (( rc == 137 || rc == 143 || rc == 130 ))
+}
+trap 'echo "overnight-run stopping — leaving the queue item in place" >&2; exit 143' TERM INT HUP
 
 read_state() {
   python3 - "$STATE" <<'PY'
@@ -376,6 +377,7 @@ while true; do
   ITEM="$(next_item)"
   if [[ -z "$ITEM" ]]; then
     if [[ "$UNTIL_STOP" == "1" ]]; then
+      echo "queue empty — waiting 30s (until stop). Drop a .md into $QUEUE" >&2
       sleep 30
       continue
     fi
@@ -467,6 +469,10 @@ EOF
       CONT="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("true" if d.get("continue") else "false")' "$WORK/$RUN_ID/eval.json" 2>/dev/null || echo false)"
       LAST_SLICE="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("next_slice") or "")' "$WORK/$RUN_ID/eval.json" 2>/dev/null || true)"
     fi
+    if killed_by_signal "$ITEM_RC"; then
+      echo "Cline was stopped by kickstart — not failing $ITEM" >&2
+      break
+    fi
     if [[ "$CONT" != "true" || "$ITEM_RC" -ne 0 ]]; then
       break
     fi
@@ -474,8 +480,11 @@ EOF
   done
 
   LAST_RC=$ITEM_RC
-  if (( ITEM_RC != 0 )); then ANY_FAIL=1; fi
-  if [[ "$ITEM" == "__refine__" ]]; then
+  if killed_by_signal "$ITEM_RC"; then
+    echo "leaving $ITEM in queue (process was killed)" >&2
+    log_event item_interrupted runId "$RUN_ID" item "$ITEM" rc "$ITEM_RC"
+    break
+  elif [[ "$ITEM" == "__refine__" ]]; then
     log_event item_refine runId "$RUN_ID" from "$LAST_COMPLETED" iters "$ITER" rc "$ITEM_RC"
     sleep 20
   elif [[ "$ITEM" == "standing-mission.md" ]]; then
@@ -494,6 +503,7 @@ EOF
     mv "$QUEUE/$ITEM" "$QUEUE/failed/$ITEM" 2>/dev/null || true
     log_event item_fail runId "$RUN_ID" item "$ITEM" rc "$ITEM_RC"
   fi
+  if (( ITEM_RC != 0 )); then ANY_FAIL=1; fi
   ITEMS_DONE=$((ITEMS_DONE + 1))
   CURRENT_ITEM=""
   STATUS="running"

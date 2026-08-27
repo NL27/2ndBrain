@@ -122,6 +122,10 @@ report_worker() {
   launchctl print system/com.dao.secondbrain.overnight 2>/dev/null \
     | grep -E 'state =|pid =|last exit code|program =|runs =|error|user =' \
     || echo "(cannot print daemon)"
+  echo "==> queue"
+  ls -1 "$PROD/queue"/*.md "$PROD/queue"/*.txt 2>/dev/null || echo "(empty — copy 00-smoke.md here)"
+  echo "==> queue/failed"
+  ls -1 "$PROD/queue/failed" 2>/dev/null || echo "(none)"
   echo "==> ollama on 127.0.0.1:11434"
   if curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
     curl -fsS -m 2 http://127.0.0.1:11434/api/tags \

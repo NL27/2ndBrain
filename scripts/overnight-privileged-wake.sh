@@ -63,28 +63,8 @@ PY
 }
 seed_interactive_ollama
 
-# Old hub keeps the previous PATH / provider errors. Root can kill it.
-pkill -9 -f 'cline-hub-daemon' 2>/dev/null || true
-if command -v lsof >/dev/null; then
-  lsof -ti tcp:25463 2>/dev/null | xargs kill -9 2>/dev/null || true
-fi
-rm -f "$PROD/state/current.json"
-
-# Ollama is Homebrew CLI, not an icon on the Desktop. Install + start so
-# overnight Cline has 127.0.0.1:11434. Model pull happens in overnight-run.
-ensure_ollama_as_user() {
-  local brew="/opt/homebrew/bin/brew"
-  [[ -x "$brew" ]] || brew="/usr/local/bin/brew"
-  [[ -x "$brew" ]] || return 0
-  sudo -Hu "$INTERACTIVE" env HOME="/Users/$INTERACTIVE" \
-    PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-    "$brew" install ollama >&2 || true
-  sudo -Hu "$INTERACTIVE" env HOME="/Users/$INTERACTIVE" \
-    PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-    "$brew" services start ollama >&2 || true
-}
-ensure_ollama_as_user
-
+# Stop the old runner first so a later hub kill cannot SIGKILL Cline and
+# make overnight-run move the live queue file to failed/.
 install_daemon() {
   local label="$1" drop="$2" env_name="$3" hour="$4" minute="$5"
   local plist="/Library/LaunchDaemons/${label}.plist"
@@ -129,6 +109,17 @@ PLIST
 
 install_daemon com.dao.secondbrain.overnight "$PROD" production 2 0
 install_daemon com.dao.secondbrain.overnight-dev "$DEV" development 2 30
+
+# Runner is stopped. Reap leftover hubs only (never kill by port — that
+# SIGKILLs the Cline client and the old runner then files the job as failed).
+pkill -f 'cline-hub-daemon' 2>/dev/null || true
+rm -f "$PROD/state/current.json"
+
+if [[ -x /opt/homebrew/bin/ollama || -x /usr/local/bin/ollama ]]; then
+  sudo -Hu "$INTERACTIVE" env HOME="/Users/$INTERACTIVE" \
+    PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+    /opt/homebrew/bin/brew services start ollama >/dev/null 2>&1 || true
+fi
 
 chown -R "$INTERACTIVE:staff" "$PROD/logs" "$PROD/state" "$PROD/queue" 2>/dev/null || true
 chmod 770 "$PROD" "$PROD/logs" "$PROD/state" "$PROD/queue" "$PROD/queue/failed" 2>/dev/null || true
