@@ -221,8 +221,50 @@ PY
     done
     echo "Cline pid $pid has exited"
     ;;
+  ollama)
+    export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    echo "==> ollama binary"
+    command -v ollama || { echo "ollama not on PATH"; exit 1; }
+    ollama --version
+    echo "==> brew services"
+    brew services list 2>/dev/null | grep -i ollama || echo "(no brew service line)"
+    echo "==> GET http://127.0.0.1:11434/api/tags"
+    if ! curl -fsS -m 5 http://127.0.0.1:11434/api/tags; then
+      echo "not listening — starting brew services ollama"
+      brew services start ollama || true
+      sleep 2
+      curl -fsS -m 5 http://127.0.0.1:11434/api/tags || { echo "Ollama did not start"; exit 1; }
+    fi
+    echo
+    echo "==> generate (qwen3.5:4b, one short reply)"
+    python3 - <<'PY'
+import json, sys, urllib.request
+req = urllib.request.Request(
+    "http://127.0.0.1:11434/api/generate",
+    data=json.dumps({
+        "model": "qwen3.5:4b",
+        "prompt": "Reply with the single word ok.",
+        "stream": False,
+        "options": {"num_predict": 8},
+    }).encode(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+try:
+    with urllib.request.urlopen(req, timeout=180) as r:
+        body = json.loads(r.read().decode())
+except Exception as e:
+    print("FAIL:", e)
+    sys.exit(1)
+text = (body.get("response") or "").strip()
+if not text:
+    print("FAIL: empty response")
+    sys.exit(1)
+print("OK:", text.replace("\n", " ")[:200])
+PY
+    ;;
   *)
-    echo "usage: overnight-ctl.sh start|stop|status|watch" >&2
+    echo "usage: overnight-ctl.sh start|stop|status|watch|ollama" >&2
     exit 1
     ;;
 esac

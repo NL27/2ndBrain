@@ -259,21 +259,21 @@ PY
     echo "Need model qwen3.5:4b. In Terminal: ollama pull qwen3.5:4b" >&2
     exit 1
   fi
-  echo "Ollama ready (qwen3.5:4b on 127.0.0.1:11434)" >&2
+  echo "Ollama listening on 127.0.0.1:11434" >&2
 }
 
-warm_ollama() {
-  echo "Warming qwen3.5:4b so Cline is not racing a model load…" >&2
-  command -v ollama >/dev/null && ollama stop qwen2.5-coder:7b >/dev/null 2>&1 || true
-  python3 - <<'PY' >&2
-import json, urllib.request
+# A normal Ollama generate. If this fails, Cline will fail too — stop here.
+verify_ollama() {
+  echo "Checking Ollama with one short generate (qwen3.5:4b)…" >&2
+  python3 - <<'PY'
+import json, sys, urllib.request
 req = urllib.request.Request(
     "http://127.0.0.1:11434/api/generate",
     data=json.dumps({
         "model": "qwen3.5:4b",
-        "prompt": "hi",
+        "prompt": "Reply with the single word ok.",
         "stream": False,
-        "options": {"num_predict": 1},
+        "options": {"num_predict": 8},
     }).encode(),
     headers={"Content-Type": "application/json"},
     method="POST",
@@ -281,13 +281,18 @@ req = urllib.request.Request(
 try:
     with urllib.request.urlopen(req, timeout=180) as r:
         body = json.loads(r.read().decode())
-    print("Ollama warmup ok:", (body.get("response") or "")[:40].replace("\n", " "))
 except Exception as e:
-    print("Ollama warmup failed:", e)
+    print("Ollama generate failed:", e, file=sys.stderr)
+    sys.exit(1)
+text = (body.get("response") or "").strip().replace("\n", " ")
+if not text:
+    print("Ollama generate returned empty text", file=sys.stderr)
+    sys.exit(1)
+print("Ollama ok:", text[:80], file=sys.stderr)
 PY
 }
 ensure_ollama
-warm_ollama
+verify_ollama
 
 mkdir -p "$DROP/bin"
 ln -sfn /usr/sbin/ioreg "$DROP/bin/ioreg" 2>/dev/null || true
