@@ -540,7 +540,32 @@ EOF
     ITEM_RC=$?
     set -uo pipefail
     if (( ITEM_RC != 0 )); then
-      echo "cline slice rc=$ITEM_RC item=$ITEM bin=$CLINE_BIN (see logs/cline-$RUN_ID.err)" >&2
+      echo "cline slice rc=$ITEM_RC item=$ITEM bin=$CLINE_BIN" >&2
+      echo "==> last 40 lines of logs/cline-$RUN_ID.err" >&2
+      tail -n 40 "$CLINE_ERR" >&2 || true
+      echo "==> last 20 lines of logs/cline-$RUN_ID.out" >&2
+      tail -n 20 "$CLINE_OUT" >&2 || true
+      python3 - "$CLINE_OUT" <<'PY' >&2 || true
+import json, sys
+path = sys.argv[1]
+try:
+    lines = open(path, encoding="utf-8").read().splitlines()
+except OSError:
+    sys.exit(0)
+errs = []
+for line in lines:
+    try:
+        o = json.loads(line)
+    except Exception:
+        continue
+    if o.get("type") in ("error", "fail", "failed") or o.get("message"):
+        if o.get("type") in ("heartbeat", "run_start", "hook_event", "agent_event"):
+            continue
+        if o.get("type") == "error" or "error" in str(o.get("message", "")).lower():
+            errs.append(line)
+for line in errs[-8:]:
+    print(line)
+PY
     fi
     log_event iteration runId "$RUN_ID" item "$ITEM" iter "$ITER" rc "$ITEM_RC"
     CONT="false"
@@ -548,6 +573,13 @@ EOF
     if [[ -f "$WORK/$RUN_ID/eval.json" ]]; then
       CONT="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print("true" if d.get("continue") else "false")' "$WORK/$RUN_ID/eval.json" 2>/dev/null || echo false)"
       LAST_SLICE="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("next_slice") or "")' "$WORK/$RUN_ID/eval.json" 2>/dev/null || true)"
+    fi
+    # Cline sometimes exits 1 after writing eval.json. The mission is done.
+    if (( ITEM_RC != 0 )) && [[ -f "$WORK/$RUN_ID/eval.json" ]]; then
+      if [[ "$CONT" != "true" ]]; then
+        echo "Cline rc=$ITEM_RC but eval.json continue=false — counting as done" >&2
+        ITEM_RC=0
+      fi
     fi
     if killed_by_signal "$ITEM_RC"; then
       echo "Cline was stopped by kickstart — not failing $ITEM" >&2
