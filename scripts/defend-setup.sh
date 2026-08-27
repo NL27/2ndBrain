@@ -81,6 +81,8 @@ seed_dirs() {
   mkdir -p "$SANDBOX_DIR" \
     "$VAULT/Notes/Overnight/queue" \
     "$VAULT/Notes/Overnight/dev-queue" \
+    "$VAULT/Notes/Overnight/ideas" \
+    "$VAULT/Notes/Health" \
     "$VAULT/Notes/Security"
   if [[ ! -f "$VAULT/Notes/Overnight/README.md" ]]; then
     cat > "$VAULT/Notes/Overnight/README.md" <<'EOF'
@@ -159,6 +161,10 @@ PLIST
     <key>Hour</key><integer>1</integer>
     <key>Minute</key><integer>50</integer>
   </dict>
+  <key>WatchPaths</key>
+  <array>
+    <string>/Users/Shared/2nd-Brain-Night/work/vault-out</string>
+  </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>SECOND_BRAIN_VAULT</key>

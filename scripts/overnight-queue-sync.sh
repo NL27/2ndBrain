@@ -61,3 +61,18 @@ fi
 if [[ -f "$DEV_DROP/work/last-run.md" ]]; then
   cp -f "$DEV_DROP/work/last-run.md" "$VAULT/Notes/Overnight/last-run-dev.md"
 fi
+
+# Production writes keepers under work/vault-out/Notes/ (cannot write the Desktop vault).
+# Copy into the vault without --delete so human edits stay.
+VAULT_OUT="$PROD_DROP/work/vault-out/Notes"
+mkdir -p "$PROD_DROP/work/vault-out/Notes/Health" \
+  "$PROD_DROP/work/vault-out/Notes/Overnight/ideas" \
+  "$VAULT/Notes/Health" \
+  "$VAULT/Notes/Overnight/ideas"
+if [[ -d "$VAULT_OUT" ]]; then
+  if command -v rsync >/dev/null; then
+    rsync -a "$VAULT_OUT/" "$VAULT/Notes/"
+  else
+    cp -R "$VAULT_OUT/." "$VAULT/Notes/" 2>/dev/null || true
+  fi
+fi

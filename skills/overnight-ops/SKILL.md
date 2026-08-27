@@ -32,6 +32,10 @@ Overnight Cline uses local Ollama: **`qwen2.5-coder:7b`** (code) and **`qwen3.5:
 
 Keep `task_plan.md` / `eval.json` **in the Shared worktree**. Production may use `caldav-local` on loopback (Private blue, Professional red; booking cards are times-only).
 
+Number vault files `01-…md`, `02-…md` so `ls` order is the drain order. Each completable job must set `eval.json` `"continue": false` so the runner takes the next file. The **last** job may keep `"continue": true` (or be refined) until Stop.
+
+Production keepers the agent cannot put on your Desktop go in `{drop}/work/vault-out/Notes/`. The overnight-queue LaunchAgent copies that tree into the vault (01:50 and when `vault-out` changes).
+
 When one mission cannot be improved, the runner takes the next queue file. If none remain, it refines the last finished mission until you stop.
 
 Optional standing mission: `Notes/Overnight/standing-mission.md` — copied every night, never consumed.

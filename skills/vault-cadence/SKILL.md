@@ -19,6 +19,8 @@ The vault is `~/Desktop/2nd Brain`. Obsidian is the graph; VS Code is the folder
 | Private event note | `Notes/Calendar/private/` (blue in Full Calendar) |
 | Work event note | `Notes/Calendar/professional/` (red; work sees Busy only on CalDAV) |
 | Security | `Notes/Security/` — kind + path only |
+| Sourced health notes | `Notes/Health/` (from overnight `work/vault-out/Notes/Health/`) |
+| Overnight improvement ideas | `Notes/Overnight/ideas/` (from `vault-out`) |
 
 ## Rules
 

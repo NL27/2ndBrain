@@ -18,7 +18,24 @@
     "pypi.org",
     "files.pythonhosted.org",
     "registry.npmjs.org",
-    "registry.npmmirror.com"
+    "registry.npmmirror.com",
+    "en.wikipedia.org",
+    "wikipedia.org",
+    "upload.wikimedia.org",
+    "pubmed.ncbi.nlm.nih.gov",
+    "pmc.ncbi.nlm.nih.gov",
+    "ncbi.nlm.nih.gov",
+    "eutils.ncbi.nlm.nih.gov",
+    "doi.org",
+    "who.int",
+    "www.who.int",
+    "nih.gov",
+    "www.nih.gov",
+    "ods.od.nih.gov",
+    "cochrane.org",
+    "www.cochrane.org",
+    "arxiv.org",
+    "export.arxiv.org"
   ],
   "trusted_cidrs": [
     "127.0.0.0/8",
@@ -28,5 +45,5 @@
     "192.168.0.0/16",
     "169.254.0.0/16"
   ],
-  "notes": "Loopback and RFC1918 stay open so oMLX, Ollama, heed and LAN printers keep working. The pf default-deny applies only to user secondbrain-agent, not to the logged-in person."
+  "notes": "Loopback and RFC1918 stay open so oMLX, Ollama, heed and LAN printers keep working. PubMed/WHO/NIH/Wikipedia are for sourced overnight research only. The pf default-deny applies only to user secondbrain-agent, not to the logged-in person. Re-run defend (admin) after changing this list."
 }
