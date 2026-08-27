@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Overnight Cline runner for a sandboxed agent user (production or development).
-# Persists state so a crash resumes the same queue item instead of starting over.
+# Overnight Cline runner. Runs as the logged-in user (no seatbelt / no
+# secondbrain-agent). Queue and logs stay in the Shared drop folder.
 set -uo pipefail
 
 ENV_NAME="${SECONDBRAIN_ENV:-production}"
@@ -47,15 +47,13 @@ sh("ENV_LABEL", name)
 PY
 )"
 
-AGENT_USER="${AGENT_USER:-secondbrain-agent}"
+AGENT_USER="$(id -un)"
 DROP="${DROP:-/Users/Shared/2nd-Brain-Night}"
 STATE="$DROP/state/current.json"
 LOG="$DROP/logs/activity.jsonl"
 QUEUE="$DROP/queue"
 WORK="$DROP/work"
-PROFILE="${SECONDBRAIN_SANDBOX_PROFILE:-/Library/Application Support/SecondBrain/sandbox/${PROFILE_NAME:-secondbrain-agent.sb}}"
 CLINE_BIN="${CLINE_BIN:-}"
-SANDBOX_CLINE="/Library/Application Support/SecondBrain/sandbox/cline-bin"
 TIMEOUT="${OVERNIGHT_BUDGET:-${TIMEOUT_DEFAULT:-0}}"
 ITER_TIMEOUT="${OVERNIGHT_ITER_TIMEOUT:-${ITER_TIMEOUT_DEFAULT:-3600}}"
 MAX_ITERS="${OVERNIGHT_MAX_ITERS:-${MAX_ITERS_DEFAULT:-8}}"
@@ -96,49 +94,22 @@ PY
 }
 
 whoami_now="$(id -un)"
-if [[ "$whoami_now" != "$AGENT_USER" ]]; then
-  log_event isolation_incomplete reason "must-run-as-$AGENT_USER" actual "$whoami_now"
-  echo "overnight-run must execute as $AGENT_USER (got $whoami_now)" >&2
+if [[ "$(id -u)" -eq 0 ]]; then
+  echo "overnight-run must not run as root" >&2
   exit 1
-fi
-
-if [[ ! -O "/Users/$AGENT_USER" ]]; then
-  home_owner="$(stat -f '%Su' "/Users/$AGENT_USER" 2>/dev/null || echo missing)"
-  log_event isolation_warning reason "home-not-owned" owner "$home_owner"
-  echo "overnight-run: /Users/$AGENT_USER is owned by $home_owner (expected $AGENT_USER) — continuing" >&2
-fi
-
-# Isolation: we must not be able to list the installing user's home.
-OWNER=""
-[[ -f "$DROP/.interactive-user" ]] && OWNER="$(cat "$DROP/.interactive-user")"
-if [[ -n "$OWNER" && "$OWNER" != "$AGENT_USER" && -d "/Users/$OWNER" ]]; then
-  if ls "/Users/$OWNER/Desktop" >/dev/null 2>&1; then
-    log_event isolation_warning reason "interactive-home-visible"
-  fi
-fi
-
-if [[ "${ENV_LABEL:-production}" == "development" ]]; then
-  if ls /Users/Shared/2nd-Brain-Night/queue >/dev/null 2>&1; then
-    log_event isolation_warning reason "dev-can-read-production-drop" env development
-  fi
 fi
 
 if [[ -z "$CLINE_BIN" ]]; then
   for candidate in \
-      "$SANDBOX_CLINE" \
       /opt/homebrew/bin/cline \
       /usr/local/bin/cline \
-      "/Users/$AGENT_USER/.local/bin/cline"; do
-    [[ -x "$candidate" ]] && CLINE_BIN="$candidate" && break
+      "$(command -v cline 2>/dev/null || true)"; do
+    [[ -n "$candidate" && -x "$candidate" ]] && CLINE_BIN="$candidate" && break
   done
-fi
-if [[ -x "$SANDBOX_CLINE" ]]; then
-  export CLINE_BIN_PATH="$SANDBOX_CLINE"
-  CLINE_BIN="$SANDBOX_CLINE"
 fi
 if [[ -z "$CLINE_BIN" ]]; then
   log_event failed reason "cline-not-installed"
-  echo "cline is not installed for $AGENT_USER" >&2
+  echo "cline is not installed (need /opt/homebrew/bin/cline)" >&2
   exit 1
 fi
 
@@ -336,9 +307,6 @@ EOF
 
     WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" -P ollama-qwen-coder \
       --timeout "$SLICE_TO" --retries 6 --json --auto-approve true "$PROMPT" )
-    # Do not wrap with sandbox-exec: seatbelt aborted Node (rc 134) on Josh's Air.
-    # Isolation stays: secondbrain-agent user, pf allowlist, deny ACL on the
-    # interactive home, and the Shared drop folder.
     CLINE_OUT="$DROP/logs/cline-$RUN_ID.out"
     CLINE_ERR="$DROP/logs/cline-$RUN_ID.err"
     for f in "$CLINE_OUT" "$CLINE_ERR"; do

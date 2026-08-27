@@ -62,11 +62,10 @@ touch_run_now() {
 }
 
 worker_started() {
-  pgrep -u secondbrain-agent -f 'overnight-run.sh' >/dev/null 2>&1 \
-    || pgrep -u secondbrain-agent -f '/cline' >/dev/null 2>&1
+  pgrep -f '/overnight-run.sh' >/dev/null 2>&1 \
+    || pgrep -f '/opt/homebrew/bin/cline' >/dev/null 2>&1
 }
 
-# A crash in the first second used to count as "up" and skip installing the new runner.
 worker_stable() {
   worker_started || return 1
   sleep 2
@@ -75,15 +74,14 @@ worker_stable() {
 
 system_runner_stale() {
   [[ -f "$HERE/overnight-run.sh" ]] || return 1
-  local sb="$HERE/../Resources/sandbox/secondbrain-agent.sb"
-  [[ -f "$sb" ]] || sb="$HERE/secondbrain-agent.sb"
+  local uname=""
+  uname="$(/usr/libexec/PlistBuddy -c 'Print :UserName' /Library/LaunchDaemons/com.dao.secondbrain.overnight.plist 2>/dev/null || true)"
   ! cmp -s "$HERE/overnight-run.sh" "$SYS_RUNNER" 2>/dev/null \
-    || { [[ -f "$sb" ]] && ! cmp -s "$sb" "/Library/Application Support/SecondBrain/sandbox/secondbrain-agent.sb" 2>/dev/null; } \
-    || [[ ! -x "/Library/Application Support/SecondBrain/sandbox/cline-bin" ]]
+    || [[ "$uname" == "secondbrain-agent" || -z "$uname" ]]
 }
 
 kickstart_as_admin() {
-  echo "Asking macOS to install Cline's macOS binary, overnight-run.sh, and kickstart (admin password)…" >&2
+  echo "Asking macOS to run overnight as you (no sandbox user) and kickstart (admin password)…" >&2
   osascript <<OSA >/dev/null
 do shell script "export SECONDBRAIN_INTERACTIVE_USER='$USER'; /bin/bash '$HERE/overnight-privileged-wake.sh'" with administrator privileges
 OSA
@@ -117,15 +115,12 @@ report_worker() {
   tail -n 40 "$PROD/logs/overnight.stdout.log" 2>/dev/null || echo "(no overnight.stdout.log yet)"
   echo "==> tail overnight.stderr.log"
   tail -n 20 "$PROD/logs/overnight.stderr.log" 2>/dev/null || echo "(no overnight.stderr.log yet)"
-  echo "==> ps -u secondbrain-agent"
-  if ! pgrep -u secondbrain-agent >/dev/null 2>&1; then
-    echo "(no secondbrain-agent processes)"
-  else
-    ps -u secondbrain-agent 2>/dev/null || true
-  fi
+  echo "==> overnight / cline processes"
+  pgrep -lf overnight-run.sh 2>/dev/null || echo "(no overnight-run.sh)"
+  pgrep -lf /opt/homebrew/bin/cline 2>/dev/null || echo "(no homebrew cline)"
   echo "==> launchctl print (production)"
   launchctl print system/com.dao.secondbrain.overnight 2>/dev/null \
-    | grep -E 'state =|pid =|last exit code|program =|runs =|error' \
+    | grep -E 'state =|pid =|last exit code|program =|runs =|error|user =' \
     || echo "(cannot print daemon)"
   echo "==> overnight-run.sh (system vs repo)"
   ls -la "$SYS_RUNNER" 2>/dev/null || echo "(missing overnight-run.sh)"
@@ -134,11 +129,6 @@ report_worker() {
   else
     echo "STALE: system copy does not match $HERE/overnight-run.sh — approve the admin dialog"
   fi
-  echo "==> /Users/secondbrain-agent"
-  ls -ld /Users/secondbrain-agent 2>/dev/null || echo "(no home directory)"
-  echo "==> sandbox cline-bin"
-  ls -la "/Library/Application Support/SecondBrain/sandbox/cline-bin" 2>/dev/null \
-    || echo "(missing compiled Cline binary — approve admin on Start)"
 }
 
 case "$CMD" in

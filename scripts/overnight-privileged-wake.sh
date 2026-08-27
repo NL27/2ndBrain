@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Root half of overnight-ctl start: install runner, Cline native binary, perms, kickstart.
+# Root half of overnight-ctl start: install runner, run overnight as the
+# logged-in user (no seatbelt, no secondbrain-agent), kickstart.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,87 +15,68 @@ if [[ "$(id -u)" -ne 0 ]]; then
   echo "overnight-privileged-wake.sh must run as root" >&2
   exit 1
 fi
+[[ -n "$INTERACTIVE" ]] || { echo "no interactive user" >&2; exit 1; }
 
-mkdir -p "$SYS_DIR"
+mkdir -p "$SYS_DIR" "$PROD/logs" "$PROD/state" "$PROD/queue/failed" \
+  "$DEV/logs" "$DEV/state"
 cp -f "$HERE/overnight-run.sh" "$SYS_RUNNER"
 chmod 755 "$SYS_RUNNER"
-SB="$HERE/../Resources/sandbox"
-[[ -f "$SB/secondbrain-agent.sb" ]] || SB="$HERE"
-[[ -f "$SB/secondbrain-agent.sb" ]] && cp -f "$SB/secondbrain-agent.sb" "$SB/secondbrain-dev.sb" "$SYS_DIR/" 2>/dev/null || true
+rm -f "$SYS_DIR/secondbrain-agent.sb" "$SYS_DIR/secondbrain-dev.sb"
 
-NATIVE="@cline/cli-darwin-arm64"
-[[ "$(uname -m)" == "x86_64" ]] && NATIVE="@cline/cli-darwin-x64"
 if command -v npm >/dev/null; then
+  NATIVE="@cline/cli-darwin-arm64"
+  [[ "$(uname -m)" == "x86_64" ]] && NATIVE="@cline/cli-darwin-x64"
   npm install -g cline "$NATIVE" --include=optional >&2 || true
 fi
 
-# The Node shim must stay in npm's tree. Overnight execs the compiled binary
-# (world-readable copy) so secondbrain-agent does not need Homebrew.
-native_bin=""
-for c in \
-    /opt/homebrew/lib/node_modules/@cline/cli-darwin-arm64/bin/cline \
-    /opt/homebrew/lib/node_modules/@cline/cli-darwin-x64/bin/cline \
-    /opt/homebrew/lib/node_modules/cline/bin/.cline \
-    /usr/local/lib/node_modules/@cline/cli-darwin-arm64/bin/cline \
-    /usr/local/lib/node_modules/@cline/cli-darwin-x64/bin/cline \
-    /usr/local/lib/node_modules/cline/bin/.cline; do
-  [[ -x "$c" ]] && native_bin="$c" && break
-done
-if [[ -z "$native_bin" ]]; then
-  native_bin="$(python3 - <<'PY'
-import os, pathlib
-roots = [
-    pathlib.Path("/opt/homebrew/lib/node_modules"),
-    pathlib.Path("/usr/local/lib/node_modules"),
-]
-for root in roots:
-    for p in root.glob("**/cli-darwin-*/bin/cline"):
-        if os.access(p, os.X_OK):
-            print(p)
-            raise SystemExit
-    for p in root.glob("cline/bin/.cline"):
-        if os.access(p, os.X_OK):
-            print(p)
-            raise SystemExit
-PY
-)"
-fi
-if [[ -n "$native_bin" && -x "$native_bin" ]]; then
-  cp -f "$native_bin" "$SYS_DIR/cline-bin"
-  chmod 755 "$SYS_DIR/cline-bin"
-fi
+install_daemon() {
+  local label="$1" drop="$2" env_name="$3" hour="$4" minute="$5"
+  local plist="/Library/LaunchDaemons/${label}.plist"
+  cat > "$plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>${label}</string>
+  <key>UserName</key><string>${INTERACTIVE}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>${SYS_RUNNER}</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key><integer>${hour}</integer>
+    <key>Minute</key><integer>${minute}</integer>
+  </dict>
+  <key>WatchPaths</key>
+  <array>
+    <string>${drop}/state/run-now</string>
+  </array>
+  <key>WorkingDirectory</key><string>${drop}</string>
+  <key>StandardOutPath</key><string>${drop}/logs/overnight.stdout.log</string>
+  <key>StandardErrorPath</key><string>${drop}/logs/overnight.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>SECONDBRAIN_ENV</key><string>${env_name}</string>
+    <key>HOME</key><string>/Users/${INTERACTIVE}</string>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>
+PLIST
+  chmod 644 "$plist"
+  launchctl bootout "system/${label}" 2>/dev/null || true
+  launchctl bootstrap system "$plist" 2>/dev/null || launchctl load -w "$plist" 2>/dev/null || true
+}
 
-cline_src=""
-for c in /opt/homebrew/bin/cline "$(npm prefix -g 2>/dev/null)/bin/cline"; do
-  [[ -x "$c" ]] || continue
-  cline_src="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$c")"
-  [[ -x "$cline_src" ]] && break
-  cline_src=""
-done
-if [[ -n "$cline_src" ]]; then
-  mkdir -p /usr/local/bin
-  ln -sfn "$cline_src" /usr/local/bin/cline
-  for user in secondbrain-agent secondbrain-dev; do
-    [[ -d "/Users/$user" ]] || continue
-    mkdir -p "/Users/$user/.local/bin"
-    ln -sfn "$cline_src" "/Users/$user/.local/bin/cline"
-    chown -R "$user:staff" "/Users/$user/.local"
-  done
-fi
+install_daemon com.dao.secondbrain.overnight "$PROD" production 2 0
+install_daemon com.dao.secondbrain.overnight-dev "$DEV" development 2 30
 
-/usr/sbin/createhomedir -c -u secondbrain-agent >/dev/null 2>&1 || true
-/usr/sbin/createhomedir -c -u secondbrain-dev >/dev/null 2>&1 || true
-mkdir -p /Users/secondbrain-agent /Users/secondbrain-dev
-chown -R secondbrain-agent:staff /Users/secondbrain-agent
-chown -R secondbrain-dev:staff /Users/secondbrain-dev
-chmod 700 /Users/secondbrain-agent /Users/secondbrain-dev
-
-mkdir -p "$PROD/logs" "$PROD/state" "$PROD/queue/failed" "$DEV/logs" "$DEV/state"
-chown -R "$INTERACTIVE:secondbrain" "$PROD/logs" "$PROD/state" "$PROD/queue" 2>/dev/null || true
+chown -R "$INTERACTIVE:staff" "$PROD/logs" "$PROD/state" "$PROD/queue" 2>/dev/null || true
 chmod 770 "$PROD" "$PROD/logs" "$PROD/state" "$PROD/queue" "$PROD/queue/failed" 2>/dev/null || true
-chmod g+rw "$PROD/logs"/* "$PROD/queue/failed"/* 2>/dev/null || true
-chown secondbrain-agent:secondbrain "$PROD/logs"/overnight.*.log "$PROD/logs"/activity.jsonl "$PROD/logs"/cline-* 2>/dev/null || true
-chmod 664 "$PROD/logs"/overnight.*.log "$PROD/logs"/activity.jsonl 2>/dev/null || true
+chmod -R u+rw "$PROD/logs" "$PROD/queue" 2>/dev/null || true
 
 launchctl kickstart -k system/com.dao.secondbrain.overnight 2>/dev/null || true
 launchctl kickstart -k system/com.dao.secondbrain.overnight-dev 2>/dev/null || true

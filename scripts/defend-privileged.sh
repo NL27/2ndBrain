@@ -97,7 +97,6 @@ install_overnight_daemon() {
 <dict>
   <key>Label</key><string>${label}</string>
   <key>UserName</key><string>${user}</string>
-  <key>GroupName</key><string>${group}</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
@@ -118,12 +117,9 @@ install_overnight_daemon() {
   <key>EnvironmentVariables</key>
   <dict>
     <key>SECONDBRAIN_ENV</key><string>${env_name}</string>
-    <key>SECONDBRAIN_SANDBOX_PROFILE</key>
-    <string>${SUPPORT_SYS}/${profile}</string>
-    <key>SECONDBRAIN_SANDBOX_DIR</key>
-    <string>${SUPPORT_SYS}</string>
+    <key>HOME</key><string>/Users/${user}</string>
     <key>PATH</key>
-    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
   </dict>
 </dict>
 </plist>
@@ -255,9 +251,9 @@ if [[ -f "$CREDS_FILE" ]]; then
 fi
 
 install_overnight_daemon com.dao.secondbrain.overnight \
-  secondbrain-agent "$GROUP_PROD" "$DROP_PROD" production 2 0 secondbrain-agent.sb
+  "$INTERACTIVE" staff "$DROP_PROD" production 2 0 unused
 install_overnight_daemon com.dao.secondbrain.overnight-dev \
-  secondbrain-dev "$GROUP_DEV" "$DROP_DEV" development 2 30 secondbrain-dev.sb
+  "$INTERACTIVE" staff "$DROP_DEV" development 2 30 unused
 
 # Root kickstart actually starts the job. User-level kickstart on a system
 # daemon is ignored, and WatchPaths misses writes that happened before load.

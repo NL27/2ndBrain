@@ -22,7 +22,7 @@ Development **must not** read `/Users/Shared/2nd-Brain-Night`, the vault, or pro
 
 ## Command shape
 
-`overnight-run.sh` selects the env from `SECONDBRAIN_ENV` and prepends hard limits. Do not strip that prefix. Cline is **not** wrapped in `sandbox-exec` (that aborted Node). Isolation is the sandbox **user**, pf allowlist, home deny ACL, and the Shared drop.
+Night jobs use the **logged-in Mac user** and Homebrew `cline`. Seatbelt / `secondbrain-agent` are not used for the worker. Queue and logs stay in `/Users/Shared/2nd-Brain-Night`.
 
 Budget (from `environments.json`): **until stop** (`timeout` 0). Safety cap 7 days production / 2 days development. Slice timeout and max eval loops per item still apply. Stop file: `{drop}/STOP` (copied from `Notes/Overnight/STOP`).
 
