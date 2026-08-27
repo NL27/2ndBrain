@@ -89,14 +89,12 @@ OSA
 
 wake_overnight() {
   local did_admin=0
-  touch_run_now
   if system_runner_stale; then
     echo "System overnight-run.sh is stale — admin password to install this repo's script." >&2
     kickstart_as_admin || true
     did_admin=1
   else
-    launchctl kickstart -k system/com.dao.secondbrain.overnight 2>/dev/null || true
-    launchctl kickstart -k system/com.dao.secondbrain.overnight-dev 2>/dev/null || true
+    touch_run_now
   fi
   worker_stable && return 0
   if (( did_admin == 0 )); then
@@ -123,9 +121,25 @@ report_worker() {
     | grep -E 'state =|pid =|last exit code|program =|runs =|error|user =' \
     || echo "(cannot print daemon)"
   echo "==> queue"
-  ls -1 "$PROD/queue"/*.md "$PROD/queue"/*.txt 2>/dev/null || echo "(empty — copy 00-smoke.md here)"
+  found=0
+  for f in "$PROD/queue"/*.md "$PROD/queue"/*.txt; do
+    [[ -f "$f" ]] || continue
+    echo "${f##*/}"
+    found=1
+  done
+  if [[ "$found" -eq 0 ]]; then
+    echo "(empty — copy 00-smoke.md here)"
+  fi
   echo "==> queue/failed"
   ls -1 "$PROD/queue/failed" 2>/dev/null || echo "(none)"
+  echo "==> newest cline err"
+  newest="$(ls -t "$PROD/logs"/cline-*.err 2>/dev/null | head -1 || true)"
+  if [[ -n "$newest" ]]; then
+    echo "$newest"
+    tail -n 30 "$newest"
+  else
+    echo "(none yet)"
+  fi
   echo "==> ollama on 127.0.0.1:11434"
   if curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
     curl -fsS -m 2 http://127.0.0.1:11434/api/tags \

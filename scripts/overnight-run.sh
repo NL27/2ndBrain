@@ -64,6 +64,27 @@ UNTIL_STOP="${OVERNIGHT_UNTIL_STOP:-${UNTIL_STOP_DEFAULT:-1}}"
 
 mkdir -p "$DROP/logs" "$DROP/state" "$WORK" "$QUEUE"
 
+# One production worker. WatchPaths + kickstart used to start two Cline slices.
+LOCKDIR="$DROP/state/worker.lock"
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+  old_pid="$(cat "$LOCKDIR/pid" 2>/dev/null || true)"
+  if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+    echo "overnight-run already active pid=$old_pid — not starting a second Cline" >&2
+    exit 0
+  fi
+  rm -rf "$LOCKDIR"
+  mkdir "$LOCKDIR" 2>/dev/null || {
+    echo "overnight-run already active" >&2
+    exit 0
+  }
+fi
+echo $$ > "$LOCKDIR/pid"
+release_lock() { rm -rf "$LOCKDIR" 2>/dev/null || true; }
+trap 'echo "overnight-run stopping — leaving the queue item in place" >&2; release_lock; exit 143' TERM INT HUP
+trap release_lock EXIT
+pkill -f "cline --cwd ${WORK}/" 2>/dev/null || true
+echo "======== $(date -u +%Y-%m-%dT%H:%M:%SZ) overnight-run pid=$$ ========" >&2
+
 json_escape() {
   python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()[:-1] if False else sys.argv[1]))' "$1"
 }
@@ -249,7 +270,6 @@ killed_by_signal() {
   local rc="${1:-0}"
   (( rc == 137 || rc == 143 || rc == 130 ))
 }
-trap 'echo "overnight-run stopping — leaving the queue item in place" >&2; exit 143' TERM INT HUP
 
 read_state() {
   python3 - "$STATE" <<'PY'

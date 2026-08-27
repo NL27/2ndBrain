@@ -110,10 +110,13 @@ PLIST
 install_daemon com.dao.secondbrain.overnight "$PROD" production 2 0
 install_daemon com.dao.secondbrain.overnight-dev "$DEV" development 2 30
 
-# Runner is stopped. Reap leftover hubs only (never kill by port — that
-# SIGKILLs the Cline client and the old runner then files the job as failed).
+# Runner is stopped. Reap leftover overnight Cline clients in this drop
+# (launchd kills bash; Cline children can keep running).
+pkill -f "cline --cwd ${PROD}/work/" 2>/dev/null || true
+pkill -f "cline --cwd ${DEV}/work/" 2>/dev/null || true
 pkill -f 'cline-hub-daemon' 2>/dev/null || true
 rm -f "$PROD/state/current.json"
+rm -rf "$PROD/state/worker.lock" "$PROD/state/worker.pid"
 
 if [[ -x /opt/homebrew/bin/ollama || -x /usr/local/bin/ollama ]]; then
   sudo -Hu "$INTERACTIVE" env HOME="/Users/$INTERACTIVE" \
