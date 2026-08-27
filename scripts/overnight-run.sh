@@ -140,12 +140,16 @@ fi
 # Cline 3 -P is a built-in SDK id (ollama), not a custom providers.json key.
 # Seed ~/.cline so overnight does not depend on an interactive `cline auth`.
 ensure_ollama_provider() {
-  python3 - "${HOME}/.cline/data/settings/providers.json" <<'PY'
+  python3 - "${HOME}/.cline/data" <<'PY'
 import json, os, sys
 from datetime import datetime, timezone
-path = sys.argv[1]
+from pathlib import Path
+
+root = Path(sys.argv[1])
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 base = "http://127.0.0.1:11434"
+# Cline treats provider "timeout" as milliseconds. 900 was 0.9s and killed every call.
+timeout_ms = 900_000
 ollama = {
     "settings": {
         "provider": "ollama",
@@ -153,16 +157,18 @@ ollama = {
         "baseUrl": base,
         "ollamaBaseUrl": base,
         "ollamaModelId": "qwen3.5:4b",
-        "timeout": 900,
-        "requestTimeout": 900000,
+        "timeout": timeout_ms,
+        "requestTimeout": timeout_ms,
+        "requestTimeoutMs": timeout_ms,
     },
     "updatedAt": now,
     "tokenSource": "manual",
 }
+prov_path = root / "settings" / "providers.json"
 doc = {"version": 1, "providers": {}}
-if os.path.isfile(path):
+if prov_path.is_file():
     try:
-        loaded = json.load(open(path, encoding="utf-8"))
+        loaded = json.loads(prov_path.read_text(encoding="utf-8"))
         if isinstance(loaded, dict):
             doc = loaded
     except Exception:
@@ -173,11 +179,28 @@ providers["ollama-qwen-coder"] = ollama
 doc["version"] = 1
 doc["providers"] = providers
 doc["lastUsedProvider"] = "ollama"
-os.makedirs(os.path.dirname(path), exist_ok=True)
-open(path, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+prov_path.parent.mkdir(parents=True, exist_ok=True)
+prov_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+
+for rel in ("globalState.json", "settings/global-settings.json"):
+    path = root / rel
+    extra = {}
+    if path.is_file():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                extra = loaded
+        except Exception:
+            extra = {}
+    extra["requestTimeoutMs"] = timeout_ms
+    extra["ollamaRequestTimeoutMs"] = timeout_ms
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(extra, indent=2) + "\n", encoding="utf-8")
+print(timeout_ms, file=sys.stderr)
 PY
 }
 ensure_ollama_provider
+echo "Cline Ollama request timeout is 15 minutes (was 0.9s from timeout: 900 ms)." >&2
 
 # Homebrew Ollama is a CLI (+ menubar), not an app on the Desktop.
 ensure_ollama() {
@@ -693,7 +716,7 @@ EOF
 
     export CLINE_SESSION_BACKEND_MODE="${CLINE_SESSION_BACKEND_MODE:-local}"
     WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" -P ollama -m qwen3.5:4b \
-      --timeout "$SLICE_TO" --retries 2 --json --auto-approve true "$PROMPT" )
+      --timeout "$SLICE_TO" --retries 2 --thinking none --json --auto-approve true "$PROMPT" )
     CLINE_OUT="$DROP/logs/cline-$RUN_ID.out"
     CLINE_ERR="$DROP/logs/cline-$RUN_ID.err"
     for f in "$CLINE_OUT" "$CLINE_ERR"; do
