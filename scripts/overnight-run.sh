@@ -261,7 +261,33 @@ PY
   fi
   echo "Ollama ready (qwen3.5:4b on 127.0.0.1:11434)" >&2
 }
+
+warm_ollama() {
+  echo "Warming qwen3.5:4b so Cline is not racing a model load…" >&2
+  command -v ollama >/dev/null && ollama stop qwen2.5-coder:7b >/dev/null 2>&1 || true
+  python3 - <<'PY' >&2
+import json, urllib.request
+req = urllib.request.Request(
+    "http://127.0.0.1:11434/api/generate",
+    data=json.dumps({
+        "model": "qwen3.5:4b",
+        "prompt": "hi",
+        "stream": False,
+        "options": {"num_predict": 1},
+    }).encode(),
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+try:
+    with urllib.request.urlopen(req, timeout=180) as r:
+        body = json.loads(r.read().decode())
+    print("Ollama warmup ok:", (body.get("response") or "")[:40].replace("\n", " "))
+except Exception as e:
+    print("Ollama warmup failed:", e)
+PY
+}
 ensure_ollama
+warm_ollama
 
 mkdir -p "$DROP/bin"
 ln -sfn /usr/sbin/ioreg "$DROP/bin/ioreg" 2>/dev/null || true
@@ -519,7 +545,7 @@ EOF
 
     export CLINE_SESSION_BACKEND_MODE="${CLINE_SESSION_BACKEND_MODE:-local}"
     WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" -P ollama -m qwen3.5:4b \
-      --timeout "$SLICE_TO" --retries 2 --json --thinking none --auto-approve true "$PROMPT" )
+      --timeout "$SLICE_TO" --retries 2 --json --auto-approve true "$PROMPT" )
     CLINE_OUT="$DROP/logs/cline-$RUN_ID.out"
     CLINE_ERR="$DROP/logs/cline-$RUN_ID.err"
     for f in "$CLINE_OUT" "$CLINE_ERR"; do

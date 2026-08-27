@@ -85,7 +85,18 @@ start_direct() {
     >> "$PROD/logs/overnight.stdout.log" \
     2>> "$PROD/logs/overnight.stderr.log" &
   echo $! > "$PROD/state/direct.pid"
-  worker_stable
+  echo "Waiting for Ollama warmup, then Cline…" >&2
+  local n=0 pid
+  pid="$(cat "$PROD/state/direct.pid" 2>/dev/null || true)"
+  while (( n < 90 )); do
+    pgrep -f '/opt/homebrew/bin/cline --cwd' >/dev/null 2>&1 && return 0
+    if [[ -n "$pid" ]] && ! kill -0 "$pid" 2>/dev/null; then
+      return 1
+    fi
+    sleep 2
+    n=$((n + 2))
+  done
+  worker_started
 }
 
 # Same checks we used to type by hand: logs on disk + processes as the sandbox user.
@@ -163,13 +174,16 @@ case "$CMD" in
     fi
     ;;
   watch)
-    out="$(ls -t "$PROD/logs"/cline-*.out 2>/dev/null | head -1 || true)"
     pid="$(pgrep -n -f '/opt/homebrew/bin/cline --cwd' || true)"
     if [[ -z "$pid" ]]; then
       echo "Cline is not running. Start first: scripts/overnight-ctl.sh start" >&2
       exit 1
     fi
-    echo "Watching Cline pid=$pid  (Ctrl-C stops the watcher, not Cline)"
+    cwd="$(ps -p "$pid" -o args= 2>/dev/null | python3 -c 'import sys,re; s=sys.stdin.read(); m=re.search(r"--cwd (\S+)", s); print(m.group(1) if m else "")')"
+    run_id="$(basename "$cwd")"
+    out="$PROD/logs/cline-${run_id}.out"
+    [[ -f "$out" ]] || out="$(ls -t "$PROD/logs"/cline-*.out 2>/dev/null | head -1 || true)"
+    echo "Watching Cline pid=$pid  log=$out  (Ctrl-C stops the watcher, not Cline)"
     item="queue"
     [[ -n "$out" ]] || out="$PROD/logs/cline-watch.out"
     elapsed=0
