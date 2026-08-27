@@ -104,13 +104,20 @@ struct OvernightConsoleView: View {
                 Text(monitor.lane.headline)
                     .font(.system(size: 13, weight: .medium))
             }
+            if monitor.lane.working {
+                ProgressView(value: monitor.lane.progressValue)
+                    .progressViewStyle(.linear)
+                Text(monitor.lane.progressLabel.isEmpty ? "Waiting on local Qwen…" : monitor.lane.progressLabel)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
             if !monitor.lastCtl.isEmpty {
                 Text(monitor.lastCtl)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
             }
-            Text("Start copies the vault queue, clears STOP, and loads the overnight daemon (macOS may ask for an admin password). This window tails the Shared logs — you should see a pid and a queue filename when it is actually working.")
+            Text("Start runs overnight as you (no admin). While Qwen thinks, the bar moves and logs get a heartbeat every 5s.")
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -122,8 +129,8 @@ struct OvernightConsoleView: View {
     private var dotColor: Color {
         let lane = monitor.lane
         if lane.stopped { return .secondary }
-        if lane.runnerAlive || lane.pidAlive { return .green }
-        if !lane.daemonLoaded { return .orange }
+        if lane.working || lane.runnerAlive || lane.pidAlive { return .green }
+        if !lane.daemonLoaded { return .yellow }
         return .yellow
     }
 

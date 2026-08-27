@@ -60,15 +60,26 @@ enum OvernightControl {
         var queueFiles: [String]
         var daemonLoaded: Bool
         var runnerAlive: Bool
+        var progressBar: String
+        var progressLabel: String
+        var progressValue: Double
+        var working: Bool
 
         var headline: String {
             if stopped { return "\(name): stopped" }
+            if working {
+                let item = queueItem.isEmpty ? "running" : queueItem
+                if !progressBar.isEmpty {
+                    return "\(name): \(progressBar)  \(item)\(progressLabel.isEmpty ? "" : "  \(progressLabel)")"
+                }
+                return "\(name): working — \(item)"
+            }
             if runnerAlive || (pidAlive && status == "running") {
                 let item = queueItem.isEmpty ? "running" : queueItem
                 return "\(name): working — \(item)"
             }
             if status == "running" { return "\(name): starting (pid \(pid.isEmpty ? "?" : pid))" }
-            if !daemonLoaded { return "\(name): daemon not loaded — Start asks for admin" }
+            if !daemonLoaded { return "\(name): idle (Start does not need launchd)" }
             return "\(name): until-stop, idle (\(status.isEmpty ? "waiting" : status))"
         }
     }
@@ -89,12 +100,21 @@ enum OvernightControl {
             .filter { !["README.md", "readme.md", "standing-mission.md"].contains($0) }
             .sorted() ?? []
         let daemonLoaded = launchdLoaded(daemon)
-        let runnerAlive = processRunning(pattern: "overnight-run.sh", user: agent)
+        let runnerAlive = processRunning(pattern: "overnight-run.sh")
+            || processRunning(pattern: "/opt/homebrew/bin/cline --cwd")
+        let progress = readJSON(drop.appendingPathComponent("state/progress.json"))
+        let elapsed = Int(progress["elapsed_s"] ?? "") ?? 0
+        let aliveProgress = (progress["alive"] ?? "").lowercased() == "true" || progress["alive"] == "1"
+        let working = runnerAlive || aliveProgress
+        let bar = progress["bar"] ?? ""
+        let ollama = progress["ollama"] ?? ""
+        let pulse = elapsed > 0 ? Double(elapsed % 30) / 30.0 : 0
         return Lane(
             name: name, drop: drop, agent: agent, daemon: daemon,
             stopped: stop, status: status, queueItem: item, runId: runId, pid: pid,
             pidAlive: pidAlive, queueFiles: files, daemonLoaded: daemonLoaded,
-            runnerAlive: runnerAlive
+            runnerAlive: runnerAlive, progressBar: bar,
+            progressLabel: ollama, progressValue: pulse, working: working
         )
     }
 
@@ -166,10 +186,10 @@ enum OvernightControl {
         }
     }
 
-    private static func processRunning(pattern: String, user: String) -> Bool {
+    private static func processRunning(pattern: String) -> Bool {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        p.arguments = ["-u", user, "-f", pattern]
+        p.arguments = ["-f", pattern]
         p.standardOutput = Pipe()
         p.standardError = FileHandle.nullDevice
         do {

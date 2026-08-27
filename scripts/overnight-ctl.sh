@@ -152,8 +152,53 @@ case "$CMD" in
       echo "running-until-stop"
     fi
     ;;
+  watch)
+    out="$(ls -t "$PROD/logs"/cline-*.out 2>/dev/null | head -1 || true)"
+    pid="$(pgrep -n -f '/opt/homebrew/bin/cline --cwd' || true)"
+    if [[ -z "$pid" ]]; then
+      echo "Cline is not running. Start first: scripts/overnight-ctl.sh start" >&2
+      exit 1
+    fi
+    echo "Watching Cline pid=$pid  (Ctrl-C stops the watcher, not Cline)"
+    item="queue"
+    [[ -n "$out" ]] || out="$PROD/logs/cline-watch.out"
+    elapsed=0
+    while kill -0 "$pid" 2>/dev/null; do
+      sleep 5
+      elapsed=$((elapsed + 5))
+      python3 - "$PROD/state/progress.json" "$out" "$item" "$elapsed" "$pid" <<'PY'
+import json, os, sys, urllib.request
+from datetime import datetime, timezone
+progress, out, item, elapsed, pid = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
+w = 24
+pos = (elapsed // 5) % w
+bar = "[" + (" " * pos) + "█" + (" " * (w - pos - 1)) + f"] {elapsed}s"
+ollama = "idle"
+try:
+    with urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=1) as r:
+        names = [m.get("name") or "" for m in json.load(r).get("models") or []]
+        ollama = ", ".join(n for n in names if n) or "loading model"
+except Exception:
+    ollama = "not answering"
+ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+line = json.dumps({"ts": ts, "type": "heartbeat", "elapsed_s": elapsed, "item": item, "ollama": ollama, "bar": bar})
+os.makedirs(os.path.dirname(progress), exist_ok=True)
+open(progress, "w", encoding="utf-8").write(json.dumps({
+    "ts": ts, "type": "heartbeat", "elapsed_s": elapsed, "item": item,
+    "pid": pid, "ollama": ollama, "bar": bar, "alive": True,
+}, indent=2) + "\n")
+try:
+    with open(out, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+except OSError:
+    pass
+print(f"still working  {bar}  ollama={ollama}", flush=True)
+PY
+    done
+    echo "Cline pid $pid has exited"
+    ;;
   *)
-    echo "usage: overnight-ctl.sh start|stop|status" >&2
+    echo "usage: overnight-ctl.sh start|stop|status|watch" >&2
     exit 1
     ;;
 esac

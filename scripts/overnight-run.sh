@@ -271,6 +271,61 @@ killed_by_signal() {
   (( rc == 137 || rc == 143 || rc == 130 ))
 }
 
+# Indeterminate bar while Cline/Ollama think. Writes JSON heartbeats into the
+# same .out file people tail, plus state/progress.json for the app console.
+heartbeat_until() {
+  local pid="$1" item="$2" out="$3"
+  local elapsed=0
+  local progress="$DROP/state/progress.json"
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 5
+    elapsed=$((elapsed + 5))
+    python3 - "$progress" "$out" "$item" "$elapsed" "$pid" <<'PY'
+import json, os, sys, urllib.request
+from datetime import datetime, timezone
+progress, out, item, elapsed, pid = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4]), sys.argv[5]
+w = 24
+pos = (elapsed // 5) % w
+bar = "[" + (" " * pos) + "█" + (" " * (w - pos - 1)) + f"] {elapsed}s"
+ollama = "idle"
+try:
+    with urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=1) as r:
+        names = [m.get("name") or "" for m in json.load(r).get("models") or []]
+        ollama = ", ".join(n for n in names if n) or "loading model"
+except Exception:
+    ollama = "not answering"
+ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+doc = {
+    "ts": ts, "type": "heartbeat", "elapsed_s": elapsed, "item": item,
+    "pid": pid, "ollama": ollama, "bar": bar, "alive": True,
+}
+os.makedirs(os.path.dirname(progress), exist_ok=True)
+open(progress, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+line = json.dumps({"ts": ts, "type": "heartbeat", "elapsed_s": elapsed, "item": item, "ollama": ollama, "bar": bar})
+try:
+    with open(out, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+except OSError:
+    pass
+print(f"still working  {bar}  item={item}  ollama={ollama}", file=sys.stderr, flush=True)
+PY
+  done
+  python3 - "$DROP/state/progress.json" <<'PY' 2>/dev/null || true
+import json, os, sys
+path = sys.argv[1]
+doc = {"alive": False}
+if os.path.isfile(path):
+    try:
+        doc = json.load(open(path, encoding="utf-8"))
+    except Exception:
+        doc = {}
+    if not isinstance(doc, dict):
+        doc = {}
+doc["alive"] = False
+open(path, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+PY
+}
+
 read_state() {
   python3 - "$STATE" <<'PY'
 import json, os, sys
@@ -478,7 +533,10 @@ EOF
     echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) slice start bin=$CLINE_BIN item=$ITEM backend=$CLINE_SESSION_BACKEND_MODE ===" >> "$CLINE_ERR"
     echo "launching cline (stdout $CLINE_OUT)…" >&2
     set +e
-    "${WRAP[@]}" >> "$CLINE_OUT" 2>> "$CLINE_ERR"
+    "${WRAP[@]}" >> "$CLINE_OUT" 2>> "$CLINE_ERR" &
+    cline_pid=$!
+    heartbeat_until "$cline_pid" "$ITEM" "$CLINE_OUT"
+    wait "$cline_pid"
     ITEM_RC=$?
     set -uo pipefail
     if (( ITEM_RC != 0 )); then
