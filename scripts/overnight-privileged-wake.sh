@@ -28,6 +28,42 @@ if command -v npm >/dev/null; then
   npm install -g cline "$NATIVE" --include=optional >&2 || true
 fi
 
+# The Node shim must stay in npm's tree. Overnight execs the compiled binary
+# (world-readable copy) so secondbrain-agent does not need Homebrew.
+native_bin=""
+for c in \
+    /opt/homebrew/lib/node_modules/@cline/cli-darwin-arm64/bin/cline \
+    /opt/homebrew/lib/node_modules/@cline/cli-darwin-x64/bin/cline \
+    /opt/homebrew/lib/node_modules/cline/bin/.cline \
+    /usr/local/lib/node_modules/@cline/cli-darwin-arm64/bin/cline \
+    /usr/local/lib/node_modules/@cline/cli-darwin-x64/bin/cline \
+    /usr/local/lib/node_modules/cline/bin/.cline; do
+  [[ -x "$c" ]] && native_bin="$c" && break
+done
+if [[ -z "$native_bin" ]]; then
+  native_bin="$(python3 - <<'PY'
+import os, pathlib
+roots = [
+    pathlib.Path("/opt/homebrew/lib/node_modules"),
+    pathlib.Path("/usr/local/lib/node_modules"),
+]
+for root in roots:
+    for p in root.glob("**/cli-darwin-*/bin/cline"):
+        if os.access(p, os.X_OK):
+            print(p)
+            raise SystemExit
+    for p in root.glob("cline/bin/.cline"):
+        if os.access(p, os.X_OK):
+            print(p)
+            raise SystemExit
+PY
+)"
+fi
+if [[ -n "$native_bin" && -x "$native_bin" ]]; then
+  cp -f "$native_bin" "$SYS_DIR/cline-bin"
+  chmod 755 "$SYS_DIR/cline-bin"
+fi
+
 cline_src=""
 for c in /opt/homebrew/bin/cline "$(npm prefix -g 2>/dev/null)/bin/cline"; do
   [[ -x "$c" ]] || continue

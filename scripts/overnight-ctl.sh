@@ -79,7 +79,7 @@ system_runner_stale() {
   [[ -f "$sb" ]] || sb="$HERE/secondbrain-agent.sb"
   ! cmp -s "$HERE/overnight-run.sh" "$SYS_RUNNER" 2>/dev/null \
     || { [[ -f "$sb" ]] && ! cmp -s "$sb" "/Library/Application Support/SecondBrain/sandbox/secondbrain-agent.sb" 2>/dev/null; } \
-    || { local o; o="$(/opt/homebrew/bin/cline --version 2>&1 || true)"; [[ "$o" == *"Could not find the Cline CLI binary"* || -z "$o" ]]; }
+    || [[ ! -x "/Library/Application Support/SecondBrain/sandbox/cline-bin" ]]
 }
 
 kickstart_as_admin() {
@@ -136,6 +136,9 @@ report_worker() {
   fi
   echo "==> /Users/secondbrain-agent"
   ls -ld /Users/secondbrain-agent 2>/dev/null || echo "(no home directory)"
+  echo "==> sandbox cline-bin"
+  ls -la "/Library/Application Support/SecondBrain/sandbox/cline-bin" 2>/dev/null \
+    || echo "(missing compiled Cline binary — approve admin on Start)"
 }
 
 case "$CMD" in

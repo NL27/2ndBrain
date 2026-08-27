@@ -55,6 +55,7 @@ QUEUE="$DROP/queue"
 WORK="$DROP/work"
 PROFILE="${SECONDBRAIN_SANDBOX_PROFILE:-/Library/Application Support/SecondBrain/sandbox/${PROFILE_NAME:-secondbrain-agent.sb}}"
 CLINE_BIN="${CLINE_BIN:-}"
+SANDBOX_CLINE="/Library/Application Support/SecondBrain/sandbox/cline-bin"
 TIMEOUT="${OVERNIGHT_BUDGET:-${TIMEOUT_DEFAULT:-0}}"
 ITER_TIMEOUT="${OVERNIGHT_ITER_TIMEOUT:-${ITER_TIMEOUT_DEFAULT:-3600}}"
 MAX_ITERS="${OVERNIGHT_MAX_ITERS:-${MAX_ITERS_DEFAULT:-8}}"
@@ -124,11 +125,16 @@ fi
 
 if [[ -z "$CLINE_BIN" ]]; then
   for candidate in \
+      "$SANDBOX_CLINE" \
       /opt/homebrew/bin/cline \
       /usr/local/bin/cline \
       "/Users/$AGENT_USER/.local/bin/cline"; do
     [[ -x "$candidate" ]] && CLINE_BIN="$candidate" && break
   done
+fi
+if [[ -x "$SANDBOX_CLINE" ]]; then
+  export CLINE_BIN_PATH="$SANDBOX_CLINE"
+  CLINE_BIN="$SANDBOX_CLINE"
 fi
 if [[ -z "$CLINE_BIN" ]]; then
   log_event failed reason "cline-not-installed"
