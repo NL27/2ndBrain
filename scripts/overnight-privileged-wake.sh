@@ -63,12 +63,14 @@ PY
 }
 seed_interactive_ollama
 
-# Stop the old runner first so a later hub kill cannot SIGKILL Cline and
-# make overnight-run move the live queue file to failed/.
+# Copy the runner in place. Only unload/reload the plist when it changed or
+# the daemon is missing — bootout-every-Start left the job unloaded.
 install_daemon() {
   local label="$1" drop="$2" env_name="$3" hour="$4" minute="$5"
   local plist="/Library/LaunchDaemons/${label}.plist"
-  cat > "$plist" <<PLIST
+  local tmp="${plist}.new"
+  local log="$PROD/logs/overnight.stderr.log"
+  cat > "$tmp" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -98,13 +100,36 @@ install_daemon() {
     <key>HOME</key><string>/Users/${INTERACTIVE}</string>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>CLINE_SESSION_BACKEND_MODE</key><string>local</string>
   </dict>
 </dict>
 </plist>
 PLIST
-  chmod 644 "$plist"
-  launchctl bootout "system/${label}" 2>/dev/null || true
-  launchctl bootstrap system "$plist" 2>/dev/null || launchctl load -w "$plist" 2>/dev/null || true
+  chmod 644 "$tmp"
+  local loaded=0
+  launchctl print "system/${label}" >/dev/null 2>&1 && loaded=1
+  if [[ "$loaded" -eq 1 ]] && cmp -s "$tmp" "$plist" 2>/dev/null; then
+    rm -f "$tmp"
+    echo "wake: $label already loaded, plist unchanged" >> "$log"
+    return 0
+  fi
+  mv -f "$tmp" "$plist"
+  if [[ "$loaded" -eq 1 ]]; then
+    launchctl bootout "system/${label}" >>"$log" 2>&1 || true
+    sleep 1
+  fi
+  if ! launchctl bootstrap system "$plist" >>"$log" 2>&1; then
+    echo "wake: bootstrap failed for $label, trying enable+load" >> "$log"
+    launchctl enable "system/${label}" >>"$log" 2>&1 || true
+    launchctl bootstrap system "$plist" >>"$log" 2>&1 \
+      || launchctl load -w "$plist" >>"$log" 2>&1 || true
+    sleep 1
+  fi
+  if ! launchctl print "system/${label}" >/dev/null 2>&1; then
+    echo "wake: FAILED to load $label" >> "$log"
+    return 1
+  fi
+  echo "wake: loaded $label" >> "$log"
 }
 
 install_daemon com.dao.secondbrain.overnight "$PROD" production 2 0

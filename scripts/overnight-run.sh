@@ -464,8 +464,9 @@ EOF
     fi
     PROMPT+=$'\n---\n'"$TASK"
 
+    export CLINE_SESSION_BACKEND_MODE="${CLINE_SESSION_BACKEND_MODE:-local}"
     WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" -P ollama -m qwen2.5-coder:7b \
-      --timeout "$SLICE_TO" --retries 6 --json --auto-approve true "$PROMPT" )
+      --timeout "$SLICE_TO" --retries 6 --json --verbose --auto-approve true "$PROMPT" )
     CLINE_OUT="$DROP/logs/cline-$RUN_ID.out"
     CLINE_ERR="$DROP/logs/cline-$RUN_ID.err"
     for f in "$CLINE_OUT" "$CLINE_ERR"; do
@@ -474,7 +475,8 @@ EOF
       fi
       touch "$f" 2>/dev/null || true
     done
-    echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) slice start bin=$CLINE_BIN item=$ITEM ===" >> "$CLINE_ERR"
+    echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) slice start bin=$CLINE_BIN item=$ITEM backend=$CLINE_SESSION_BACKEND_MODE ===" >> "$CLINE_ERR"
+    echo "launching cline (stdout $CLINE_OUT)…" >&2
     set +e
     "${WRAP[@]}" >> "$CLINE_OUT" 2>> "$CLINE_ERR"
     ITEM_RC=$?

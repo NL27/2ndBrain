@@ -73,6 +73,9 @@ worker_stable() {
 }
 
 system_runner_stale() {
+  if ! launchctl print system/com.dao.secondbrain.overnight >/dev/null 2>&1; then
+    return 0
+  fi
   [[ -f "$HERE/overnight-run.sh" ]] || return 1
   local uname=""
   uname="$(/usr/libexec/PlistBuddy -c 'Print :UserName' /Library/LaunchDaemons/com.dao.secondbrain.overnight.plist 2>/dev/null || true)"
@@ -132,11 +135,11 @@ report_worker() {
   fi
   echo "==> queue/failed"
   ls -1 "$PROD/queue/failed" 2>/dev/null || echo "(none)"
-  echo "==> newest cline err"
-  newest="$(ls -t "$PROD/logs"/cline-*.err 2>/dev/null | head -1 || true)"
-  if [[ -n "$newest" ]]; then
-    echo "$newest"
-    tail -n 30 "$newest"
+  echo "==> newest cline out"
+  newest_out="$(ls -t "$PROD/logs"/cline-*.out 2>/dev/null | head -1 || true)"
+  if [[ -n "$newest_out" ]]; then
+    echo "$newest_out"
+    tail -n 40 "$newest_out"
   else
     echo "(none yet)"
   fi
