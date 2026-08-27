@@ -73,13 +73,18 @@ worker_stable() {
 
 system_runner_stale() {
   [[ -f "$HERE/overnight-run.sh" ]] || return 1
-  ! cmp -s "$HERE/overnight-run.sh" "$SYS_RUNNER" 2>/dev/null
+  local sb="$HERE/../Resources/sandbox/secondbrain-agent.sb"
+  [[ -f "$sb" ]] || sb="$HERE/secondbrain-agent.sb"
+  ! cmp -s "$HERE/overnight-run.sh" "$SYS_RUNNER" 2>/dev/null \
+    || { [[ -f "$sb" ]] && ! cmp -s "$sb" "/Library/Application Support/SecondBrain/sandbox/secondbrain-agent.sb" 2>/dev/null; }
 }
 
 kickstart_as_admin() {
-  echo "Asking macOS to install overnight-run.sh, fix the agent home, and kickstart (admin password)…" >&2
+  local sb_dir="$HERE/../Resources/sandbox"
+  [[ -f "$sb_dir/secondbrain-agent.sb" ]] || sb_dir="$HERE"
+  echo "Asking macOS to install overnight-run.sh, sandbox profile, fix the agent home, and kickstart (admin password)…" >&2
   osascript <<OSA >/dev/null
-do shell script "cp '$HERE/overnight-run.sh' '$SYS_RUNNER'; chmod 755 '$SYS_RUNNER'; /usr/sbin/createhomedir -c -u secondbrain-agent >/dev/null 2>&1; true; /usr/sbin/createhomedir -c -u secondbrain-dev >/dev/null 2>&1; true; mkdir -p /Users/secondbrain-agent /Users/secondbrain-dev; chown -R secondbrain-agent:staff /Users/secondbrain-agent; chown -R secondbrain-dev:staff /Users/secondbrain-dev; chmod 700 /Users/secondbrain-agent /Users/secondbrain-dev; chown -R $USER:secondbrain /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 770 /Users/Shared/2nd-Brain-Night /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod g+rw /Users/Shared/2nd-Brain-Night/logs/*.jsonl 2>/dev/null; true; : > /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; : > /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log; chown secondbrain-agent:secondbrain /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log /Users/Shared/2nd-Brain-Night/logs/activity.jsonl; chmod 664 /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log /Users/Shared/2nd-Brain-Night/logs/activity.jsonl; launchctl kickstart -k system/com.dao.secondbrain.overnight; launchctl kickstart -k system/com.dao.secondbrain.overnight-dev" with administrator privileges
+do shell script "cp '$HERE/overnight-run.sh' '$SYS_RUNNER'; chmod 755 '$SYS_RUNNER'; cp '$sb_dir/secondbrain-agent.sb' '/Library/Application Support/SecondBrain/sandbox/secondbrain-agent.sb'; cp '$sb_dir/secondbrain-dev.sb' '/Library/Application Support/SecondBrain/sandbox/secondbrain-dev.sb'; /usr/sbin/createhomedir -c -u secondbrain-agent >/dev/null 2>&1; true; /usr/sbin/createhomedir -c -u secondbrain-dev >/dev/null 2>&1; true; mkdir -p /Users/secondbrain-agent /Users/secondbrain-dev; chown -R secondbrain-agent:staff /Users/secondbrain-agent; chown -R secondbrain-dev:staff /Users/secondbrain-dev; chmod 700 /Users/secondbrain-agent /Users/secondbrain-dev; chown -R $USER:secondbrain /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 770 /Users/Shared/2nd-Brain-Night /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod g+rw /Users/Shared/2nd-Brain-Night/logs/*.jsonl 2>/dev/null; true; : > /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; : > /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log; chown secondbrain-agent:secondbrain /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log /Users/Shared/2nd-Brain-Night/logs/activity.jsonl; chmod 664 /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log /Users/Shared/2nd-Brain-Night/logs/activity.jsonl; launchctl kickstart -k system/com.dao.secondbrain.overnight; launchctl kickstart -k system/com.dao.secondbrain.overnight-dev" with administrator privileges
 OSA
 }
 

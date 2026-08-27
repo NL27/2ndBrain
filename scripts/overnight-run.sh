@@ -124,9 +124,9 @@ fi
 
 if [[ -z "$CLINE_BIN" ]]; then
   for candidate in \
-      "/Users/$AGENT_USER/.local/bin/cline" \
       /usr/local/bin/cline \
-      /opt/homebrew/bin/cline; do
+      /opt/homebrew/bin/cline \
+      "/Users/$AGENT_USER/.local/bin/cline"; do
     [[ -x "$candidate" ]] && CLINE_BIN="$candidate" && break
   done
 fi
@@ -335,7 +335,10 @@ EOF
     set +e
     "${WRAP[@]}" >> "$DROP/logs/cline-$RUN_ID.out" 2>> "$DROP/logs/cline-$RUN_ID.err"
     ITEM_RC=$?
-    set -euo pipefail
+    set -uo pipefail
+    if (( ITEM_RC != 0 )); then
+      echo "cline slice rc=$ITEM_RC item=$ITEM bin=$CLINE_BIN (see logs/cline-$RUN_ID.err)" >&2
+    fi
     log_event iteration runId "$RUN_ID" item "$ITEM" iter "$ITER" rc "$ITEM_RC"
     CONT="false"
     LAST_SLICE=""
@@ -366,7 +369,7 @@ EOF
     write_state lastCompleted "$ITEM"
     log_event item_done runId "$RUN_ID" item "$ITEM" iters "$ITER"
   else
-    mkdir -p "$QUEUE/failed"
+    mkdir -p "$QUEUE/failed" || true
     mv "$QUEUE/$ITEM" "$QUEUE/failed/$ITEM" 2>/dev/null || true
     log_event item_fail runId "$RUN_ID" item "$ITEM" rc "$ITEM_RC"
   fi

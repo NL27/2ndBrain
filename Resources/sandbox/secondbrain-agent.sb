@@ -13,6 +13,16 @@
 (allow system-socket)
 (allow file-ioctl)
 (allow file-read-metadata)
+(allow file-map-executable
+    (subpath "/usr")
+    (subpath "/bin")
+    (subpath "/opt/homebrew")
+    (subpath "/usr/local")
+    (subpath "/System")
+    (subpath "/Library")
+    (subpath "/Users/secondbrain-agent")
+)
+(allow file-read* (subpath "/private/var/db"))
 
 (allow file-read* file-write*
     (subpath "/Users/secondbrain-agent")
