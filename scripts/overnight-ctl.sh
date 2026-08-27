@@ -26,9 +26,18 @@ ensure_overnight_daemon() {
 # on a system LaunchDaemon is usually ignored; WatchPaths or root kickstart works.
 repair_drop_perms() {
   local drop="$1" group="$2"
+  local f
   mkdir -p "$drop/logs" "$drop/state" "$drop/work" "$drop/queue"
   chgrp "$group" "$drop" "$drop/logs" "$drop/state" "$drop/work" "$drop/queue" 2>/dev/null || true
   chmod 770 "$drop" "$drop/logs" "$drop/state" "$drop/work" "$drop/queue" 2>/dev/null || true
+  # activity.jsonl / connections.jsonl are created as josh:wheel; the agent
+  # must be able to append. Skip root-owned snitch-keeper logs.
+  for f in "$drop/logs"/*.jsonl "$drop/state"/*; do
+    [[ -e "$f" ]] || continue
+    [[ "$(stat -f '%Su' "$f" 2>/dev/null)" == "root" ]] && continue
+    chgrp "$group" "$f" 2>/dev/null || true
+    chmod g+rw "$f" 2>/dev/null || true
+  done
 }
 
 touch_run_now() {
@@ -39,15 +48,16 @@ touch_run_now() {
 }
 
 worker_started() {
-  pgrep -u secondbrain-agent >/dev/null 2>&1 \
-    || { [[ -s "$PROD/logs/overnight.stdout.log" ]] && return 0; } \
-    || { [[ -s "$PROD/logs/overnight.stderr.log" ]] && return 0; }
+  # distnoted/cfprefsd also run as secondbrain-agent after a kickstart; those
+  # are not the overnight worker.
+  pgrep -u secondbrain-agent -f 'overnight-run.sh' >/dev/null 2>&1 \
+    || pgrep -u secondbrain-agent -f '/cline' >/dev/null 2>&1
 }
 
 kickstart_as_admin() {
   echo "Asking macOS to fix log permissions and kickstart overnight (admin password)…" >&2
   osascript <<OSA >/dev/null
-do shell script "chown -R $USER:secondbrain /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 770 /Users/Shared/2nd-Brain-Night /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; touch /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chown secondbrain-agent:secondbrain /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chmod 664 /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chown -R $USER:secondbrain-dev /Users/Shared/2nd-Brain-Dev/logs /Users/Shared/2nd-Brain-Dev/state 2>/dev/null; chmod 770 /Users/Shared/2nd-Brain-Dev /Users/Shared/2nd-Brain-Dev/logs /Users/Shared/2nd-Brain-Dev/state 2>/dev/null; touch /Users/Shared/2nd-Brain-Dev/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Dev/logs/overnight.stderr.log 2>/dev/null; chown secondbrain-dev:secondbrain-dev /Users/Shared/2nd-Brain-Dev/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Dev/logs/overnight.stderr.log 2>/dev/null; launchctl kickstart -k system/com.dao.secondbrain.overnight; launchctl kickstart -k system/com.dao.secondbrain.overnight-dev" with administrator privileges
+do shell script "cp '$HERE/overnight-run.sh' '/Library/Application Support/SecondBrain/sandbox/overnight-run.sh'; chmod 755 '/Library/Application Support/SecondBrain/sandbox/overnight-run.sh'; chown -R $USER:secondbrain /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 770 /Users/Shared/2nd-Brain-Night /Users/Shared/2nd-Brain-Night/logs /Users/Shared/2nd-Brain-Night/state; chmod 660 /Users/Shared/2nd-Brain-Night/logs/*.jsonl /Users/Shared/2nd-Brain-Night/state/* 2>/dev/null; true; touch /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chown secondbrain-agent:secondbrain /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chmod 664 /Users/Shared/2nd-Brain-Night/logs/overnight.stdout.log /Users/Shared/2nd-Brain-Night/logs/overnight.stderr.log; chown -R $USER:secondbrain-dev /Users/Shared/2nd-Brain-Dev/logs /Users/Shared/2nd-Brain-Dev/state 2>/dev/null; chmod 770 /Users/Shared/2nd-Brain-Dev /Users/Shared/2nd-Brain-Dev/logs /Users/Shared/2nd-Brain-Dev/state 2>/dev/null; launchctl kickstart -k system/com.dao.secondbrain.overnight; launchctl kickstart -k system/com.dao.secondbrain.overnight-dev" with administrator privileges
 OSA
 }
 

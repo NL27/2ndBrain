@@ -70,13 +70,27 @@ json_escape() {
 log_event() {
   local kind="$1"; shift
   python3 - "$kind" "$LOG" "$@" <<'PY'
-import json, sys
+import json, os, sys
 from datetime import datetime, timezone
+from pathlib import Path
 kind, path = sys.argv[1], sys.argv[2]
 extra = dict(zip(sys.argv[3::2], sys.argv[4::2]))
 event = {"ts": datetime.now(timezone.utc).isoformat(), "kind": kind, **extra}
-with open(path, "a", encoding="utf-8") as f:
-    f.write(json.dumps(event) + "\n")
+line = json.dumps(event) + "\n"
+candidates = [path]
+p = Path(path)
+candidates.append(str(p.with_name("overnight-activity.jsonl")))
+for dest in candidates:
+    try:
+        os.makedirs(os.path.dirname(dest) or ".", exist_ok=True)
+        with open(dest, "a", encoding="utf-8") as f:
+            f.write(line)
+        sys.exit(0)
+    except OSError:
+        continue
+# Logging must not kill the worker (josh:wheel activity.jsonl is not writable
+# by secondbrain-agent).
+sys.exit(0)
 PY
 }
 
@@ -89,6 +103,7 @@ fi
 
 if [[ ! -O "/Users/$AGENT_USER" ]]; then
   log_event isolation_incomplete reason "home-not-owned"
+  echo "overnight-run: /Users/$AGENT_USER is not owned by $AGENT_USER" >&2
   exit 1
 fi
 
