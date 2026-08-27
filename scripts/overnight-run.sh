@@ -155,9 +155,100 @@ PY
 }
 ensure_ollama_provider
 
+# Homebrew Ollama is a CLI (+ menubar), not an app on the Desktop.
+ensure_ollama() {
+  local brew="" ollama_bin="" n=0
+  for brew in /opt/homebrew/bin/brew /usr/local/bin/brew "$(command -v brew 2>/dev/null || true)"; do
+    [[ -n "$brew" && -x "$brew" ]] && break
+    brew=""
+  done
+  for ollama_bin in /opt/homebrew/bin/ollama /usr/local/bin/ollama "$(command -v ollama 2>/dev/null || true)"; do
+    [[ -n "$ollama_bin" && -x "$ollama_bin" ]] && break
+    ollama_bin=""
+  done
+  if [[ -z "$ollama_bin" ]]; then
+    echo "Ollama is not installed (no Desktop app needed) — installing with Homebrew…" >&2
+    if [[ -z "$brew" ]]; then
+      log_event failed reason "ollama-not-installed"
+      echo "Need Homebrew to install Ollama. In Terminal: scripts/bootstrap.sh --only ollama" >&2
+      exit 1
+    fi
+    "$brew" install ollama >&2 || true
+    for ollama_bin in /opt/homebrew/bin/ollama /usr/local/bin/ollama "$(command -v ollama 2>/dev/null || true)"; do
+      [[ -n "$ollama_bin" && -x "$ollama_bin" ]] && break
+      ollama_bin=""
+    done
+  fi
+  if [[ -z "$ollama_bin" ]]; then
+    log_event failed reason "ollama-not-installed"
+    echo "Ollama install failed. In Terminal: scripts/bootstrap.sh --only ollama" >&2
+    exit 1
+  fi
+  if ! curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    echo "Starting Ollama on 127.0.0.1:11434…" >&2
+    [[ -n "$brew" ]] && "$brew" services start ollama >/dev/null 2>&1 || true
+    curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 || \
+      ("$ollama_bin" serve >/dev/null 2>&1 &)
+    n=0
+    while (( n < 30 )); do
+      curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1 && break
+      sleep 1
+      n=$((n + 1))
+    done
+  fi
+  if ! curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    log_event failed reason "ollama-not-running"
+    echo "Ollama is installed but not answering on 127.0.0.1:11434" >&2
+    exit 1
+  fi
+  if ! python3 - <<'PY'
+import json, sys, urllib.request
+want = "qwen2.5-coder:7b"
+try:
+    with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as r:
+        names = [m.get("name") or "" for m in json.load(r).get("models") or []]
+except Exception:
+    sys.exit(1)
+for n in names:
+    if n == want or n.startswith(want):
+        sys.exit(0)
+sys.exit(1)
+PY
+  then
+    echo "Pulling qwen2.5-coder:7b (first time — several GB, wait for it)…" >&2
+    "$ollama_bin" pull qwen2.5-coder:7b >&2 || true
+  fi
+  if ! python3 - <<'PY'
+import json, sys, urllib.request
+want = "qwen2.5-coder:7b"
+try:
+    with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as r:
+        names = [m.get("name") or "" for m in json.load(r).get("models") or []]
+except Exception:
+    sys.exit(1)
+for n in names:
+    if n == want or n.startswith(want):
+        sys.exit(0)
+sys.exit(1)
+PY
+  then
+    log_event failed reason "ollama-model-missing"
+    echo "Need model qwen2.5-coder:7b. In Terminal: ollama pull qwen2.5-coder:7b" >&2
+    exit 1
+  fi
+  echo "Ollama ready (qwen2.5-coder:7b on 127.0.0.1:11434)" >&2
+}
+ensure_ollama
+
+mkdir -p "$DROP/bin"
+ln -sfn /usr/sbin/ioreg "$DROP/bin/ioreg" 2>/dev/null || true
+export PATH="$DROP/bin:$PATH"
+
 # Overnight hub on :25463 can keep a stale provider cache from earlier slices.
-pkill -f 'cline-hub-daemon.*2nd-Brain-Night' 2>/dev/null || true
-pkill -f 'cline-hub-daemon.*2nd-Brain-Dev' 2>/dev/null || true
+pkill -f 'cline-hub-daemon' 2>/dev/null || true
+if command -v lsof >/dev/null; then
+  lsof -ti tcp:25463 2>/dev/null | xargs kill -9 2>/dev/null || true
+fi
 
 read_state() {
   python3 - "$STATE" <<'PY'
@@ -361,6 +452,7 @@ EOF
       fi
       touch "$f" 2>/dev/null || true
     done
+    echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) slice start bin=$CLINE_BIN item=$ITEM ===" >> "$CLINE_ERR"
     set +e
     "${WRAP[@]}" >> "$CLINE_OUT" 2>> "$CLINE_ERR"
     ITEM_RC=$?

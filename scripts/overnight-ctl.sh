@@ -122,6 +122,13 @@ report_worker() {
   launchctl print system/com.dao.secondbrain.overnight 2>/dev/null \
     | grep -E 'state =|pid =|last exit code|program =|runs =|error|user =' \
     || echo "(cannot print daemon)"
+  echo "==> ollama on 127.0.0.1:11434"
+  if curl -fsS -m 2 http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+    curl -fsS -m 2 http://127.0.0.1:11434/api/tags \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); print(", ".join(m.get("name","") for m in d.get("models") or []) or "(no models pulled)")'
+  else
+    echo "not answering — overnight will brew install / start Ollama (no Desktop app)"
+  fi
   echo "==> overnight-run.sh (system vs repo)"
   ls -la "$SYS_RUNNER" 2>/dev/null || echo "(missing overnight-run.sh)"
   if cmp -s "$HERE/overnight-run.sh" "$SYS_RUNNER" 2>/dev/null; then
@@ -140,7 +147,7 @@ case "$CMD" in
     ;;
   start)
     rm -f "$VAULT/Notes/Overnight/STOP" "$PROD/STOP" "$DEV/STOP" \
-          "$PROD/state/stop" "$DEV/state/stop"
+          "$PROD/state/stop" "$DEV/state/stop" "$PROD/state/current.json"
     if [[ -x "$HERE/overnight-queue-sync.sh" ]]; then
       bash "$HERE/overnight-queue-sync.sh" >/dev/null 2>&1 || true
     fi
