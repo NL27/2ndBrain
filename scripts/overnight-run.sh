@@ -328,12 +328,21 @@ EOF
     fi
     PROMPT+=$'\n---\n'"$TASK"
 
-    WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" --timeout "$SLICE_TO" --retries 6 --json --auto-approve true "$PROMPT" )
+    WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" -P ollama-qwen-coder \
+      --timeout "$SLICE_TO" --retries 6 --json --auto-approve true "$PROMPT" )
     # Do not wrap with sandbox-exec: seatbelt aborted Node (rc 134) on Josh's Air.
     # Isolation stays: secondbrain-agent user, pf allowlist, deny ACL on the
     # interactive home, and the Shared drop folder.
+    CLINE_OUT="$DROP/logs/cline-$RUN_ID.out"
+    CLINE_ERR="$DROP/logs/cline-$RUN_ID.err"
+    for f in "$CLINE_OUT" "$CLINE_ERR"; do
+      if [[ -e "$f" && ! -w "$f" ]]; then
+        rm -f "$f" 2>/dev/null || true
+      fi
+      touch "$f" 2>/dev/null || true
+    done
     set +e
-    "${WRAP[@]}" >> "$DROP/logs/cline-$RUN_ID.out" 2>> "$DROP/logs/cline-$RUN_ID.err"
+    "${WRAP[@]}" >> "$CLINE_OUT" 2>> "$CLINE_ERR"
     ITEM_RC=$?
     set -uo pipefail
     if (( ITEM_RC != 0 )); then
