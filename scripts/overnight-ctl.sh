@@ -49,6 +49,27 @@ touch_run_now() {
   date -u +%Y-%m-%dT%H:%M:%SZ > "$DEV/state/run-now"
 }
 
+# Copy 01–05 into the vault queue and pull them out of failed/done so Start
+# actually runs the five in ls order. 00-smoke.md sorts first and would steal the run.
+seed_production_queue() {
+  local root src n bin
+  root="$(cd "$HERE/.." && pwd)"
+  src="$root/Resources/overnight-queue"
+  [[ -d "$src" ]] || return 0
+  mkdir -p "$VAULT/Notes/Overnight/queue" \
+    "$PROD/queue/done" "$PROD/queue/failed" "$PROD/queue/rejected"
+  rm -f "$VAULT/Notes/Overnight/queue/00-smoke.md" "$PROD/queue/00-smoke.md"
+  for n in 01-morning-brief.md 02-queue-gate.md 03-offer-privacy.md \
+           04-system-improvements.md 05-holistic-health.md; do
+    [[ -f "$src/$n" ]] || continue
+    for bin in done failed rejected; do
+      rm -f "$PROD/queue/$bin/$n" "$VAULT/Notes/Overnight/queue/$bin/$n"
+    done
+    cp -f "$src/$n" "$VAULT/Notes/Overnight/queue/$n"
+    rm -f "$PROD/state/retries.$n"
+  done
+}
+
 worker_started() {
   pgrep -f '/overnight-run.sh' >/dev/null 2>&1 \
     || pgrep -f '/opt/homebrew/bin/cline --cwd' >/dev/null 2>&1
@@ -156,6 +177,7 @@ case "$CMD" in
     stop_workers
     rm -f "$VAULT/Notes/Overnight/STOP" "$PROD/STOP" "$DEV/STOP" \
           "$PROD/state/stop" "$DEV/state/stop"
+    seed_production_queue
     if [[ -x "$HERE/overnight-queue-sync.sh" ]]; then
       bash "$HERE/overnight-queue-sync.sh" >/dev/null 2>&1 || true
     fi
