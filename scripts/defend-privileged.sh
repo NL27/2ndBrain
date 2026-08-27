@@ -119,7 +119,7 @@ install_overnight_daemon() {
     <key>SECONDBRAIN_ENV</key><string>${env_name}</string>
     <key>HOME</key><string>/Users/${user}</string>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 </dict>
 </plist>
@@ -209,30 +209,38 @@ chmod 755 "$SUPPORT_SYS/overnight-run.sh" "$SUPPORT_SYS/little-snitch-keeper.sh"
 # Seed local-only providers (no OpenRouter keys) so night jobs pick Qwen.
 seed_agent_ollama_providers() {
   local user dest
-  for user in secondbrain-agent secondbrain-dev; do
-    [[ -d "/Users/$user" ]] || continue
+  for user in "$INTERACTIVE" secondbrain-agent secondbrain-dev; do
+    [[ -n "$user" && -d "/Users/$user" ]] || continue
     dest="/Users/$user/.cline/data/settings"
     mkdir -p "$dest"
     python3 - "$dest/providers.json" <<'PY'
-import json, sys
+import json, os, sys
 from datetime import datetime, timezone
 path = sys.argv[1]
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-def entry(provider, model, base):
-    return {
-        "settings": {"provider": provider, "model": model, "baseUrl": base},
-        "updatedAt": now,
-        "tokenSource": "manual",
-    }
-doc = {
-    "version": 1,
-    "lastUsedProvider": "ollama-qwen-coder",
-    "providers": {
-        "omlx-local": entry("openai-compatible", "qwen3-coder-next", "http://127.0.0.1:8000/v1"),
-        "ollama-qwen35": entry("ollama", "qwen3.5:4b", "http://127.0.0.1:11434"),
-        "ollama-qwen-coder": entry("ollama", "qwen2.5-coder:7b", "http://127.0.0.1:11434"),
-    },
-}
+base = "http://127.0.0.1:11434"
+def entry(provider, model, url):
+    settings = {"provider": provider, "model": model, "baseUrl": url}
+    if provider == "ollama":
+        settings["ollamaBaseUrl"] = url
+        settings["ollamaModelId"] = model
+    return {"settings": settings, "updatedAt": now, "tokenSource": "manual"}
+doc = {"version": 1, "providers": {}}
+if os.path.isfile(path):
+    try:
+        loaded = json.load(open(path, encoding="utf-8"))
+        if isinstance(loaded, dict):
+            doc = loaded
+    except Exception:
+        pass
+providers = dict(doc.get("providers") or {})
+providers["ollama"] = entry("ollama", "qwen2.5-coder:7b", base)
+providers["ollama-qwen-coder"] = providers["ollama"]
+providers.setdefault("omlx-local", entry("openai-compatible", "qwen3-coder-next", "http://127.0.0.1:8000/v1"))
+providers.setdefault("ollama-qwen35", entry("ollama", "qwen3.5:4b", base))
+doc["version"] = 1
+doc["providers"] = providers
+doc["lastUsedProvider"] = "ollama"
 open(path, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
 PY
     chown -R "$user:staff" "/Users/$user/.cline"

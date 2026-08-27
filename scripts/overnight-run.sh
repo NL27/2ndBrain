@@ -2,6 +2,8 @@
 # Overnight Cline runner. Runs as the logged-in user (no seatbelt / no
 # secondbrain-agent). Queue and logs stay in the Shared drop folder.
 set -uo pipefail
+# launchd PATH is /usr/bin:/bin; Cline shells out to ioreg in /usr/sbin.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 ENV_NAME="${SECONDBRAIN_ENV:-production}"
 if [[ -z "${SECONDBRAIN_SANDBOX_DIR:-}" ]]; then
@@ -112,6 +114,50 @@ if [[ -z "$CLINE_BIN" ]]; then
   echo "cline is not installed (need /opt/homebrew/bin/cline)" >&2
   exit 1
 fi
+
+# Cline 3 -P is a built-in SDK id (ollama), not a custom providers.json key.
+# Seed ~/.cline so overnight does not depend on an interactive `cline auth`.
+ensure_ollama_provider() {
+  python3 - "${HOME}/.cline/data/settings/providers.json" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+path = sys.argv[1]
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+base = "http://127.0.0.1:11434"
+ollama = {
+    "settings": {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:7b",
+        "baseUrl": base,
+        "ollamaBaseUrl": base,
+        "ollamaModelId": "qwen2.5-coder:7b",
+    },
+    "updatedAt": now,
+    "tokenSource": "manual",
+}
+doc = {"version": 1, "providers": {}}
+if os.path.isfile(path):
+    try:
+        loaded = json.load(open(path, encoding="utf-8"))
+        if isinstance(loaded, dict):
+            doc = loaded
+    except Exception:
+        pass
+providers = dict(doc.get("providers") or {})
+providers["ollama"] = ollama
+providers["ollama-qwen-coder"] = ollama
+doc["version"] = 1
+doc["providers"] = providers
+doc["lastUsedProvider"] = "ollama"
+os.makedirs(os.path.dirname(path), exist_ok=True)
+open(path, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+PY
+}
+ensure_ollama_provider
+
+# Overnight hub on :25463 can keep a stale provider cache from earlier slices.
+pkill -f 'cline-hub-daemon.*2nd-Brain-Night' 2>/dev/null || true
+pkill -f 'cline-hub-daemon.*2nd-Brain-Dev' 2>/dev/null || true
 
 read_state() {
   python3 - "$STATE" <<'PY'
@@ -305,7 +351,7 @@ EOF
     fi
     PROMPT+=$'\n---\n'"$TASK"
 
-    WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" -P ollama-qwen-coder \
+    WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" -P ollama -m qwen2.5-coder:7b \
       --timeout "$SLICE_TO" --retries 6 --json --auto-approve true "$PROMPT" )
     CLINE_OUT="$DROP/logs/cline-$RUN_ID.out"
     CLINE_ERR="$DROP/logs/cline-$RUN_ID.err"

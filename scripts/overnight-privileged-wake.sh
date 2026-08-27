@@ -9,7 +9,7 @@ SYS_DIR="/Library/Application Support/SecondBrain/sandbox"
 PROD="/Users/Shared/2nd-Brain-Night"
 DEV="/Users/Shared/2nd-Brain-Dev"
 INTERACTIVE="${SECONDBRAIN_INTERACTIVE_USER:-$(stat -f '%Su' /dev/console 2>/dev/null)}"
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "overnight-privileged-wake.sh must run as root" >&2
@@ -23,11 +23,45 @@ cp -f "$HERE/overnight-run.sh" "$SYS_RUNNER"
 chmod 755 "$SYS_RUNNER"
 rm -f "$SYS_DIR/secondbrain-agent.sb" "$SYS_DIR/secondbrain-dev.sb"
 
-if command -v npm >/dev/null; then
-  NATIVE="@cline/cli-darwin-arm64"
-  [[ "$(uname -m)" == "x86_64" ]] && NATIVE="@cline/cli-darwin-x64"
-  npm install -g cline "$NATIVE" --include=optional >&2 || true
-fi
+seed_interactive_ollama() {
+  local dest="/Users/${INTERACTIVE}/.cline/data/settings"
+  mkdir -p "$dest"
+  python3 - "$dest/providers.json" <<'PY'
+import json, os, sys
+from datetime import datetime, timezone
+path = sys.argv[1]
+now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+base = "http://127.0.0.1:11434"
+ollama = {
+    "settings": {
+        "provider": "ollama",
+        "model": "qwen2.5-coder:7b",
+        "baseUrl": base,
+        "ollamaBaseUrl": base,
+        "ollamaModelId": "qwen2.5-coder:7b",
+    },
+    "updatedAt": now,
+    "tokenSource": "manual",
+}
+doc = {"version": 1, "providers": {}}
+if os.path.isfile(path):
+    try:
+        loaded = json.load(open(path, encoding="utf-8"))
+        if isinstance(loaded, dict):
+            doc = loaded
+    except Exception:
+        pass
+providers = dict(doc.get("providers") or {})
+providers["ollama"] = ollama
+providers["ollama-qwen-coder"] = ollama
+doc["version"] = 1
+doc["providers"] = providers
+doc["lastUsedProvider"] = "ollama"
+open(path, "w", encoding="utf-8").write(json.dumps(doc, indent=2) + "\n")
+PY
+  chown -R "$INTERACTIVE:staff" "/Users/${INTERACTIVE}/.cline" 2>/dev/null || true
+}
+seed_interactive_ollama
 
 install_daemon() {
   local label="$1" drop="$2" env_name="$3" hour="$4" minute="$5"
@@ -61,7 +95,7 @@ install_daemon() {
     <key>SECONDBRAIN_ENV</key><string>${env_name}</string>
     <key>HOME</key><string>/Users/${INTERACTIVE}</string>
     <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
 </dict>
 </plist>
