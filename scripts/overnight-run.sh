@@ -148,10 +148,12 @@ base = "http://127.0.0.1:11434"
 ollama = {
     "settings": {
         "provider": "ollama",
-        "model": "qwen2.5-coder:7b",
+        "model": "qwen3.5:4b",
         "baseUrl": base,
         "ollamaBaseUrl": base,
-        "ollamaModelId": "qwen2.5-coder:7b",
+        "ollamaModelId": "qwen3.5:4b",
+        "timeout": 900,
+        "requestTimeout": 900000,
     },
     "updatedAt": now,
     "tokenSource": "manual",
@@ -224,7 +226,7 @@ ensure_ollama() {
   fi
   if ! python3 - <<'PY'
 import json, sys, urllib.request
-want = "qwen2.5-coder:7b"
+want = "qwen3.5:4b"
 try:
     with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as r:
         names = [m.get("name") or "" for m in json.load(r).get("models") or []]
@@ -236,12 +238,12 @@ for n in names:
 sys.exit(1)
 PY
   then
-    echo "Pulling qwen2.5-coder:7b (first time — several GB, wait for it)…" >&2
-    "$ollama_bin" pull qwen2.5-coder:7b >&2 || true
+    echo "Pulling qwen3.5:4b (first time — wait for it)…" >&2
+    "$ollama_bin" pull qwen3.5:4b >&2 || true
   fi
   if ! python3 - <<'PY'
 import json, sys, urllib.request
-want = "qwen2.5-coder:7b"
+want = "qwen3.5:4b"
 try:
     with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=5) as r:
         names = [m.get("name") or "" for m in json.load(r).get("models") or []]
@@ -254,10 +256,10 @@ sys.exit(1)
 PY
   then
     log_event failed reason "ollama-model-missing"
-    echo "Need model qwen2.5-coder:7b. In Terminal: ollama pull qwen2.5-coder:7b" >&2
+    echo "Need model qwen3.5:4b. In Terminal: ollama pull qwen3.5:4b" >&2
     exit 1
   fi
-  echo "Ollama ready (qwen2.5-coder:7b on 127.0.0.1:11434)" >&2
+  echo "Ollama ready (qwen3.5:4b on 127.0.0.1:11434)" >&2
 }
 ensure_ollama
 
@@ -497,13 +499,9 @@ $(cat "$REFINE_SRC")"
     SLICE_TO=$ITER_TIMEOUT
     if (( SLICE_TO > REMAIN )); then SLICE_TO=$REMAIN; fi
     PROMPT="$(cat <<EOF
-You are $AGENT_USER on this Mac. Environment: ${ENV_LABEL:-production}. Iteration ${ITER}/${MAX_ITERS}. Stop when the human writes STOP (menu: Stop overnight agents). If this slice cannot improve the current mission further, say so in eval.json (continue false) so the runner can pick another queue item or refine the last one.
-
-Hard no (skip and write last-run.md): administrator privileges; disable SIP/FileVault/Gatekeeper/pf; new LaunchAgent/Daemon; edit MCP registry or add MCP servers; read local.env, Keychain, or SSH private keys; git push (including --force); piped remote shell installers; world-writable home/vault/Shared; send vault/captures to a URL the human did not name.
-
-Load first: thinking-router, skill-router, autonomous-loop, overnight-sandbox, overnight-ops, local-first-models, agent-hard-limits, prompt-injection-guard, secrets-hygiene, data-boundary, caldav-local. Then only the skills those routers name. Always use planning-with-files and agent-self-evaluation. Prefer local Ollama qwen2.5-coder:7b for code and qwen3.5:4b for notes. Do not switch to a cloud model unless this queue file names one.
-
-Write task_plan.md here. After the slice, write eval.json: {"overall": <1-5>, "continue": <true if overall < 4 and the next slice still serves this mission>, "next_slice": "<refinement only>"}. Do not invent a new mission. Calendar: Private is blue, Professional is red; booking offers are times-only.
+Do the queue job below. Write files in this directory. When done, write eval.json: {"overall": 5, "continue": false}.
+Hard no: sudo, git push, secrets, new MCP, disable SIP.
+Use local Ollama only.
 
 EOF
 )"
@@ -520,8 +518,8 @@ EOF
     PROMPT+=$'\n---\n'"$TASK"
 
     export CLINE_SESSION_BACKEND_MODE="${CLINE_SESSION_BACKEND_MODE:-local}"
-    WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" -P ollama -m qwen2.5-coder:7b \
-      --timeout "$SLICE_TO" --retries 6 --json --verbose --auto-approve true "$PROMPT" )
+    WRAP=( "$CLINE_BIN" --cwd "$WORK/$RUN_ID" -P ollama -m qwen3.5:4b \
+      --timeout "$SLICE_TO" --retries 2 --json --thinking none --auto-approve true "$PROMPT" )
     CLINE_OUT="$DROP/logs/cline-$RUN_ID.out"
     CLINE_ERR="$DROP/logs/cline-$RUN_ID.err"
     for f in "$CLINE_OUT" "$CLINE_ERR"; do

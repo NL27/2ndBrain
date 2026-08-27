@@ -51,7 +51,20 @@ touch_run_now() {
 
 worker_started() {
   pgrep -f '/overnight-run.sh' >/dev/null 2>&1 \
-    || pgrep -f '/opt/homebrew/bin/cline' >/dev/null 2>&1
+    || pgrep -f '/opt/homebrew/bin/cline --cwd' >/dev/null 2>&1
+}
+
+# STOP file is not enough: Start clears it while the old bash is still in
+# `sleep 30`, so the idle worker looks "already running" and never launches Cline.
+stop_workers() {
+  printf 'stop\n' > "$VAULT/Notes/Overnight/STOP"
+  printf 'stop\n' > "$PROD/STOP" 2>/dev/null || true
+  printf 'stop\n' > "$DEV/STOP" 2>/dev/null || true
+  pkill -f '/overnight-run.sh' 2>/dev/null || true
+  pkill -f "cline --cwd ${PROD}/work/" 2>/dev/null || true
+  pkill -f "cline --cwd ${DEV}/work/" 2>/dev/null || true
+  rm -rf "$PROD/state/worker.lock" "$DEV/state/worker.lock"
+  sleep 1
 }
 
 worker_stable() {
@@ -125,20 +138,17 @@ report_worker() {
 
 case "$CMD" in
   stop)
-    printf 'stop\n' > "$VAULT/Notes/Overnight/STOP"
-    printf 'stop\n' > "$PROD/STOP" 2>/dev/null || true
-    printf 'stop\n' > "$DEV/STOP" 2>/dev/null || true
+    stop_workers
     echo "stopped"
     ;;
   start)
+    stop_workers
     rm -f "$VAULT/Notes/Overnight/STOP" "$PROD/STOP" "$DEV/STOP" \
           "$PROD/state/stop" "$DEV/state/stop"
     if [[ -x "$HERE/overnight-queue-sync.sh" ]]; then
       bash "$HERE/overnight-queue-sync.sh" >/dev/null 2>&1 || true
     fi
-    if worker_started; then
-      echo "already running"
-    elif start_direct; then
+    if start_direct; then
       echo "started (direct worker as $USER — no admin)"
     else
       echo "started but worker did not appear — check $PROD/logs/overnight.stderr.log"
